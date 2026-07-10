@@ -116,7 +116,7 @@
                   <site name="left_foot" size="0.01" pos="0.025 0 -0.04"/>
                   <inertial pos="0.01454282 0.00284825 -0.02908608" mass="0.33517651" fullinertia="0.00013432 0.00054303 0.00058883 0.00001389 0.00002909 -0.00001883"/>
                   <joint name="left_ankle_roll_joint" pos="0 0 0" axis="1 0 0" range="-0.5 0.5" class="leg_joint_param" frictionloss="0.05"/>
-                  <geom type="mesh" rgba="0.898039 0.917647 0.929412 1" mesh="left_ankle_roll_link"/>
+                  <geom name="left_foot_geom" type="mesh" rgba="0.898039 0.917647 0.929412 1" mesh="left_ankle_roll_link"/>
                 </body>
               </body>
             </body>
@@ -148,7 +148,7 @@
                   <site name="right_foot" size="0.01" pos="0.025 0 -0.04"/>
                   <inertial pos="0.01454282 -0.00284825 -0.02908608" mass="0.33517651" fullinertia="0.00013432 0.00054303 0.00058883 -0.00001388 0.00002909 0.00001883"/>
                   <joint name="right_ankle_roll_joint" pos="0 0 0" axis="1 0 0" range="-0.5 0.5" class="leg_joint_param" frictionloss="0.05"/>
-                  <geom type="mesh" rgba="0.898039 0.917647 0.929412 1" mesh="right_ankle_roll_link"/>
+                  <geom name="right_foot_geom" type="mesh" rgba="0.898039 0.917647 0.929412 1" mesh="right_ankle_roll_link"/>
                 </body>
               </body>
             </body>

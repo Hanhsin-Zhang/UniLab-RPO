@@ -41,6 +41,32 @@ class Sensor(LocomotionSensor):
     foot_pos: tuple[str, str] = ("left_foot_pos", "right_foot_pos")
     foot_quat: tuple[str, str] = ("left_foot_quat", "right_foot_quat")
     foot_linvel: tuple[str, str] = ("left_foot_linvel", "right_foot_linvel")
+    foot_contact_force: tuple[str, str] = ("left_foot_contact", "right_foot_contact")
+    actuator_frc: tuple[str, ...] = (
+        "left_thigh_yaw_f",
+        "left_thigh_roll_f",
+        "left_thigh_pitch_f",
+        "left_knee_f",
+        "left_ankle_pitch_f",
+        "left_ankle_roll_f",
+        "right_thigh_yaw_f",
+        "right_thigh_roll_f",
+        "right_thigh_pitch_f",
+        "right_knee_f",
+        "right_ankle_pitch_f",
+        "right_ankle_roll_f",
+        "torso_yaw_f",
+        "left_arm_pitch_f",
+        "left_arm_roll_f",
+        "left_arm_yaw_f",
+        "left_elbow_pitch_f",
+        "left_elbow_yaw_f",
+        "right_arm_pitch_f",
+        "right_arm_roll_f",
+        "right_arm_yaw_f",
+        "right_elbow_pitch_f",
+        "right_elbow_yaw_f",
+    )
 
 
 @dataclass

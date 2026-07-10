@@ -24,6 +24,11 @@
     <geom name="floor" size="0 0 0.05" type="plane" material="groundplane" priority="2" condim="6" contype="1" conaffinity="15"/>
   </worldbody>
 
+  <sensor>
+    <contact name="left_foot_contact" geom1="left_foot_geom" geom2="floor" data="force"/>
+    <contact name="right_foot_contact" geom1="right_foot_geom" geom2="floor" data="force"/>
+  </sensor>
+
 
   
   <keyframe>
