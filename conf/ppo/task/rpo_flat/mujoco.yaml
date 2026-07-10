@@ -1,0 +1,12 @@
+# @package _global_
+training:
+  task_name: RPOFlat
+  sim_backend: mujoco
+  no_play: true
+
+algo:
+  num_envs: 16
+  max_iterations: 1
+
+reward:
+  scales: {}
