@@ -94,11 +94,11 @@
       <body name="left_thigh_yaw_link" pos="-0.071093 0.0725 -0.051778">
         <inertial pos="-0.03847656 -0.0000142 -0.05612329" mass="1.71784575" fullinertia="0.00319789 0.0024412 0.00251651 0.00000025 -0.00065088 0.00000117"/>
         <joint name="left_thigh_yaw_joint" pos="0 0 0" axis="-0.499998 0 -0.866027" range="-1 0.2" class="leg_joint_param"/>
-        <geom type="mesh" rgba="0.69804 0.69804 0.69804 1" mesh="left_thigh_yaw_link"/>
+        <geom name="left_thigh_yaw_geom" type="mesh" rgba="0.69804 0.69804 0.69804 1" mesh="left_thigh_yaw_link"/>
         <body name="left_thigh_roll_link" pos="-0.017693 0 -0.072346">
           <inertial pos="0.05748778 -0.00601901 -0.03308921" mass="1.66236465" fullinertia="0.00212675 0.00351120 0.00228565 0.00003170 0.00014062 -0.00001801"/>
           <joint name="left_thigh_roll_joint" pos="0 0 0" axis="0.866027 0 -0.499998" range="-0.2 1" class="leg_joint_param"/>
-          <geom type="mesh" rgba="0.69804 0.69804 0.69804 1" mesh="left_thigh_roll_link"/>
+          <geom name="left_thigh_roll_geom" type="mesh" rgba="0.69804 0.69804 0.69804 1" mesh="left_thigh_roll_link"/>
           <body name="left_thigh_pitch_link" pos="0.060622 0.02085 -0.035">
             <inertial pos="0.00004587 -0.01904764 -0.19858149" mass="2.34600715" fullinertia="0.02018963 0.02158818 0.00302937 -0.00000310 0.00001430 -0.00215090"/>
             <joint name="left_thigh_pitch_joint" pos="0 0 0" axis="0 1 0" range="-2.5 0.8" class="leg_joint_param"/>
@@ -126,11 +126,11 @@
       <body name="right_thigh_yaw_link" pos="-0.071093 -0.0725 -0.051778">
         <inertial pos="-0.03847656 0.0000142 -0.05612329" mass="1.71632614" fullinertia="0.00319396 0.0024375 0.00251592 0.0 -0.00065014 -0.00000003"/>
         <joint name="right_thigh_yaw_joint" pos="0 0 0" axis="-0.499998 0 -0.866027" range="-0.2 1" class="leg_joint_param"/>
-        <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="right_thigh_yaw_link"/>
+        <geom name="right_thigh_yaw_geom" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="right_thigh_yaw_link"/>
         <body name="right_thigh_roll_link" pos="-0.0189924084475403 0 -0.0715958163677252">
           <inertial pos="0.05748778 0.00601901 -0.03308921" mass="1.66310652" fullinertia="0.00213051 0.00351195 0.00228331 -0.00003033 0.00013508 0.00001792"/>
           <joint name="right_thigh_roll_joint" pos="0 0 0" axis="0.866027 0 -0.499998" range="-1 0.2" class="leg_joint_param"/>
-          <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="right_thigh_roll_link"/>
+          <geom name="right_thigh_roll_geom" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="right_thigh_roll_link"/>
           <body name="right_thigh_pitch_link" pos="0.0619208163652291 -0.0208499999999942 -0.0357500000093095">
             <inertial pos="0.00004587 0.01904764 -0.19858149" mass="2.34600715" fullinertia="0.02018963 0.02158818 0.00302937 0.00000309 0.00001431 0.0021509"/>
             <joint name="right_thigh_pitch_joint" pos="0 0 0" axis="0 1 0" range="-2.5 0.8" class="leg_joint_param"/>
@@ -158,7 +158,7 @@
       <body name="torso_link" pos="-0.0281649492242451 0 0.0672000000054882">
         <inertial pos="-0.00234775 -0.00000466 0.0984446" mass="7.58189737" fullinertia="0.06904132 0.05679531 0.03888628 -0.00004044 0.00223305 -0.00001881"/>
         <joint name="torso_joint" pos="0 0 0" axis="0 0 1" range="-2.62 2.62" class="waist_joint_param"/>
-        <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="torso_link"/>
+        <geom name="torso_geom" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="torso_link"/>
         <body name="left_arm_pitch_link" pos="0 0.121749999999383 0.206175860782433">
           <inertial pos="-0.00436523 0.04995146 0.0" mass="0.47284363" fullinertia="0.00015644 0.00008197 0.00018907 0.00002207 0.0 0.0"/>
           <joint name="left_arm_pitch_joint" pos="0 0 0" axis="0 1 0" range="-3.14 2.57" class="arm_joint_param"/>
@@ -313,9 +313,11 @@
     <framepos name="left_foot_pos" objtype="site" objname="left_foot"/>
     <framequat name="left_foot_quat" objtype="site" objname="left_foot"/>
     <framelinvel name="left_foot_linvel" objtype="site" objname="left_foot"/>
+    <framepos name="left_knee_pos" objtype="body" objname="left_knee_link"/>
     <framepos name="right_foot_pos" objtype="site" objname="right_foot"/>
     <framequat name="right_foot_quat" objtype="site" objname="right_foot"/>
     <framelinvel name="right_foot_linvel" objtype="site" objname="right_foot"/>
+    <framepos name="right_knee_pos" objtype="body" objname="right_knee_link"/>
     <gyro name="angular-velocity" site="imu" noise="0.005" cutoff="34.9"/>
     <velocimeter name="linear-velocity" site="imu" noise="0.001" cutoff="30"/>
     <accelerometer name="linear-acceleration" site="imu" noise="0.005" cutoff="157"/>

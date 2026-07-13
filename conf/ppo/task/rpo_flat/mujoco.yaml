@@ -2,11 +2,39 @@
 training:
   task_name: RPOFlat
   sim_backend: mujoco
+  logger: tensorboard
   no_play: true
+  play_env_num: 16       # eval 回放时用多少环境（不是训练 env 数）
+  play_steps: 400        # 回放步数（你想看更久就加）
 
 algo:
-  num_envs: 16
-  max_iterations: 1
+  seed: 42
+  num_envs: 4096
+  num_steps_per_env: 24
+  max_iterations: 8001
+  save_interval: 500
+  empirical_normalization: false
+  experiment_name: rpo_flat
+  run_name: ""
+  policy:
+    init_noise_std: 1.0
+    actor_hidden_dims: [512, 256, 128]
+    critic_hidden_dims: [512, 256, 128]
+    activation: elu
+  algorithm:
+    value_loss_coef: 1.0
+    use_clipped_value_loss: true
+    clip_param: 0.2
+    entropy_coef: 0.005
+    num_learning_epochs: 5
+    num_mini_batches: 4
+    learning_rate: 1.0e-4
+    schedule: adaptive
+    gamma: 0.994
+    lam: 0.9
+    desired_kl: 0.01
+    max_grad_norm: 1.0
+
   obs_groups:
     actor:
       - actor
@@ -14,4 +42,41 @@ algo:
       - critic
 
 reward:
-  scales: {}
+  scales:
+    track_lin_vel_xy_exp: 1.0
+    track_ang_vel_z_exp: 1.0
+    lin_vel_z_l2: -0.2
+    ang_vel_xy_l2: -0.1
+    flat_orientation_l2: -1.0
+    action_rate_l2: -0.02
+    action_smoothness_l2: -0.02
+    joint_torques_l2: -1.0e-5
+    joint_vel_l2: -2.0e-4
+    dof_acc_l2: -2.5e-7
+    energy: -1.0e-4
+    undesired_contacts: -1.0
+    dof_pos_limits: -1.0
+    termination_penalty: -200.0
+    feet_air_time: 0.25
+    feet_force: -3.0e-3
+    feet_contact_without_cmd: 0.1
+    feet_orientation_l2: -0.1
+    feet_distance: 0.1
+    knee_distance: 0.1
+    stand_still: -0.2
+    upward: 0.4
+  tracking_sigma: 0.25
+  min_base_height: 0.22
+  max_tilt_deg: 70.0
+  undesired_contact_threshold: 1.0
+  feet_air_time_threshold: 0.4
+  feet_force_threshold: 500.0
+  feet_force_max_reward: 400.0
+  feet_distance_min: 0.16
+  feet_distance_max: 0.50
+  knee_distance_min: 0.18
+  knee_distance_max: 0.35
+  stand_still_command_threshold: 0.01
+  stand_still_body_vel_threshold: 0.5
+  stand_still_pos_weight: 1.0
+  stand_still_vel_weight: 0.04
