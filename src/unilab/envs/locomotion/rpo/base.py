@@ -43,19 +43,21 @@ class Sensor(LocomotionSensor):
     foot_linvel: tuple[str, str] = ("left_foot_linvel", "right_foot_linvel")
     knee_pos: tuple[str, str] = ("left_knee_pos", "right_knee_pos")
     foot_contact_force: tuple[str, str] = ("left_foot_contact", "right_foot_contact")
+    # thigh_yaw / thigh_roll have no collision in URDF (commented out);
+    # only torso remains as non-foot contact surface.
     undesired_contact_force: tuple[str, ...] = (
         "torso_contact",
-        "left_thigh_yaw_contact",
-        "left_thigh_roll_contact",
-        "right_thigh_yaw_contact",
-        "right_thigh_roll_contact",
+        # "left_thigh_yaw_contact",
+        # "left_thigh_roll_contact",
+        # "right_thigh_yaw_contact",
+        # "right_thigh_roll_contact",
     )
     termination_contact_force: tuple[str, ...] = (
         "torso_contact",
-        "left_thigh_yaw_contact",
-        "left_thigh_roll_contact",
-        "right_thigh_yaw_contact",
-        "right_thigh_roll_contact",
+        # "left_thigh_yaw_contact",
+        # "left_thigh_roll_contact",
+        # "right_thigh_yaw_contact",
+        # "right_thigh_roll_contact",
     )
     actuator_frc: tuple[str, ...] = (
         "left_thigh_yaw_f",
@@ -101,12 +103,13 @@ class Asset:
         "left_knee_link",
         "right_knee_link",
     )
+    # thigh_yaw / thigh_roll have no collision in URDF; termination only on torso.
     termination_body_names: tuple[str, ...] = (
         "torso_link",
-        "left_thigh_yaw_link",
-        "left_thigh_roll_link",
-        "right_thigh_yaw_link",
-        "right_thigh_roll_link",
+        # "left_thigh_yaw_link",
+        # "left_thigh_roll_link",
+        # "right_thigh_yaw_link",
+        # "right_thigh_roll_link",
     )
 
 

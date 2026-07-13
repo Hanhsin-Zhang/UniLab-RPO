@@ -28,10 +28,12 @@
     <contact name="left_foot_contact" geom1="left_foot_geom" geom2="floor" data="force"/>
     <contact name="right_foot_contact" geom1="right_foot_geom" geom2="floor" data="force"/>
     <contact name="torso_contact" geom1="torso_geom" geom2="floor" data="force"/>
-    <contact name="left_thigh_yaw_contact" geom1="left_thigh_yaw_geom" geom2="floor" data="force"/>
+    <!-- <contact name="left_thigh_yaw_contact" geom1="left_thigh_yaw_geom" geom2="floor" data="force"/>
     <contact name="left_thigh_roll_contact" geom1="left_thigh_roll_geom" geom2="floor" data="force"/>
     <contact name="right_thigh_yaw_contact" geom1="right_thigh_yaw_geom" geom2="floor" data="force"/>
-    <contact name="right_thigh_roll_contact" geom1="right_thigh_roll_geom" geom2="floor" data="force"/>
+    <contact name="right_thigh_roll_contact" geom1="right_thigh_roll_geom" geom2="floor" data="force"/> -->
+      <!-- thigh_yaw and thigh_roll have no collision in URDF (commented out);
+         removed their contact sensors to match IsaacLab training behavior. -->
   </sensor>
 
 
