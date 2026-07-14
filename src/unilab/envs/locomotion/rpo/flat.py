@@ -63,6 +63,10 @@ def _default_reward_config() -> RPOFlatRewardConfig:
             "knee_distance": 0.1,
             "stand_still": -0.2,
             "upward": 0.4,
+            "joint_deviation_hip": -0.03,
+            "joint_deviation_legs": -0.01,
+            "joint_deviation_torso": -0.5,
+            "joint_deviation_arms": -0.06,
         }
     )
 
@@ -87,6 +91,8 @@ class RPOFlatCfg(RPOBaseCfg):
     actor_obs_history_length: int = 10
     critic_obs_history_length: int = 10
     contact_force_threshold: float = 1.0
+    rel_standing_envs: float = 0.2
+    command_resample_interval: float = 10.0
     reward_config: RPOFlatRewardConfig = field(default_factory=_default_reward_config)
 
 
@@ -124,6 +130,13 @@ class RPOFlatEnv(RPOBaseEnv):
         self._joint_range = (
             np.asarray(joint_range, dtype=dtype) if joint_range is not None else None
         )
+        # Joint indices for grouped deviation rewards (IsaacLab RPO style).
+        # Actuator order: 0..5 left leg, 6..11 right leg, 12 torso,
+        # 13..17 left arm, 18..22 right arm.
+        self._hip_joint_idx = np.array([0, 1, 6, 7], dtype=np.intp)          # thigh_yaw/roll
+        self._legs_joint_idx = np.array([2, 3, 4, 5, 8, 9, 10, 11], dtype=np.intp)  # thigh_pitch/knee/ankle
+        self._torso_joint_idx = np.array([12, 14, 15, 16, 17, 19, 20, 21, 22], dtype=np.intp)  # torso+arm_roll/yaw+elbow
+        self._arms_joint_idx = np.array([13, 18], dtype=np.intp)              # arm_pitch
         self._init_reward_functions()
 
     @property
@@ -285,6 +298,10 @@ class RPOFlatEnv(RPOBaseEnv):
             commands = np.zeros((self._num_envs, 3), dtype=get_global_dtype())
             state.info["commands"] = commands
 
+        # Mid-episode command resampling (matching IsaacLab 10s interval)
+        if self._cfg.command_resample_interval > 0:
+            self._resample_commands_on_interval(state)
+
         actor_current = self._build_actor_obs(
             state.info,
             gyro=gyro,
@@ -356,9 +373,28 @@ class RPOFlatEnv(RPOBaseEnv):
     def _sample_commands(self, num_samples: int) -> np.ndarray:
         low = np.asarray(self._cfg.commands.vel_limit[0], dtype=get_global_dtype())
         high = np.asarray(self._cfg.commands.vel_limit[1], dtype=get_global_dtype())
-        return np.asarray(
-            np.random.uniform(low=low, high=high, size=(num_samples, 3)), dtype=get_global_dtype()
+        cmds = np.asarray(
+            np.random.uniform(low=low, high=high, size=(num_samples, 3)),
+            dtype=get_global_dtype(),
         )
+        # rel_standing_envs: first N envs get zero command (standing)
+        num_standing = max(1, int(num_samples * self._cfg.rel_standing_envs)) if num_samples > 1 else 0
+        if num_standing > 0:
+            cmds[:num_standing] = 0.0
+            np.random.shuffle(cmds)  # shuffle so standing envs are not contiguous
+        return cmds
+
+    def _resample_commands_on_interval(self, state: NpEnvState) -> None:
+        """Resample commands every ``command_resample_interval`` seconds."""
+        steps = state.info.get("steps")
+        if steps is None:
+            return
+        resample_every = max(1, int(self._cfg.command_resample_interval / self._cfg.ctrl_dt))
+        need_resample = np.asarray((steps % resample_every) == 0)
+        if not np.any(need_resample):
+            return
+        idx = np.where(need_resample)[0]
+        state.info["commands"][idx] = self._sample_commands(len(idx))
 
     def _projected_gravity(self, base_quat: np.ndarray) -> np.ndarray:
         gravity_w = np.zeros((base_quat.shape[0], 3), dtype=get_global_dtype())
@@ -449,6 +485,10 @@ class RPOFlatEnv(RPOBaseEnv):
             "knee_distance": self._reward_knee_distance,
             "stand_still": self._reward_stand_still,
             "upward": self._reward_upward,
+            "joint_deviation_hip": self._reward_joint_deviation_hip,
+            "joint_deviation_legs": self._reward_joint_deviation_legs,
+            "joint_deviation_torso": self._reward_joint_deviation_torso,
+            "joint_deviation_arms": self._reward_joint_deviation_arms,
         }
 
     def _compute_reward(
@@ -625,6 +665,25 @@ class RPOFlatEnv(RPOBaseEnv):
     def _reward_upward(self, ctx: RewardContext) -> np.ndarray:
         assert ctx.gravity is not None
         return np.asarray(-ctx.gravity[:, 2], dtype=get_global_dtype())
+
+    # ── joint deviation (IsaacLab RPO style, L1) ───────────────────
+
+    def _reward_joint_deviation_l1(self, ctx: RewardContext, indices: np.ndarray) -> np.ndarray:
+        """L1 penalty for deviation from default, summed over the given joint indices."""
+        diff = ctx.dof_pos[:, indices] - ctx.default_angles[indices]
+        return np.asarray(np.sum(np.abs(diff), axis=1), dtype=get_global_dtype())
+
+    def _reward_joint_deviation_hip(self, ctx: RewardContext) -> np.ndarray:
+        return self._reward_joint_deviation_l1(ctx, self._hip_joint_idx)
+
+    def _reward_joint_deviation_legs(self, ctx: RewardContext) -> np.ndarray:
+        return self._reward_joint_deviation_l1(ctx, self._legs_joint_idx)
+
+    def _reward_joint_deviation_torso(self, ctx: RewardContext) -> np.ndarray:
+        return self._reward_joint_deviation_l1(ctx, self._torso_joint_idx)
+
+    def _reward_joint_deviation_arms(self, ctx: RewardContext) -> np.ndarray:
+        return self._reward_joint_deviation_l1(ctx, self._arms_joint_idx)
 
     def _contact_count_from_sensors(
         self,

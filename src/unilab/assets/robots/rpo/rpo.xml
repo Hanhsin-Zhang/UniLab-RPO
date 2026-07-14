@@ -92,12 +92,13 @@
     <!-- <light directional="true" diffuse=".4 .4 .4" specular="0.1 0.1 0.1" pos="0 0 5.0" dir="0 0 -1" castshadow="false"/>
     <light directional="true" diffuse=".6 .6 .6" specular="0.2 0.2 0.2" pos="0 0 4" dir="0 0 -1"/>
     <geom name="ground" type="plane" size="0 0 1" pos="0.001 0 0" quat="1 0 0 0" material="matplane" condim="1" conaffinity="15" group="0"/> -->
-    <body name="base_link" pos="0 0 0.75">
+    <body name="base_link" pos="0 0 0.803">
       <site name="imu" size="0.01" pos="0.0 0 0.0"/>
       <inertial pos="-0.04700769 -0.00000239 -0.00862801" mass="5.51295532" fullinertia="0.03052646 0.01536233 0.03006209 0.00000063 -0.00079063 0.00000026"/>
       <joint name="floating_base_joint" type="free" limited="false"/>
       <geom class="visual" rgba="0.75294 0.75294 0.75294 1" mesh="base_link"/>
-      <geom name="base_geom" class="collision" type="mesh" mesh="base_link"/>
+      <!-- <geom name="base_geom" class="collision" type="mesh" mesh="base_link"/> -->
+      <geom name="base_geom" class="collision" type="box" pos="-0.04 -0.0 -0.0" size="0.08 0.08 0.06"/>
       <body name="left_thigh_yaw_link" pos="-0.071093 0.0725 -0.051778">
         <inertial pos="-0.03847656 -0.0000142 -0.05612329" mass="1.71784575" fullinertia="0.00319789 0.0024412 0.00251651 0.00000025 -0.00065088 0.00000117"/>
         <joint name="left_thigh_yaw_joint" pos="0 0 0" axis="-0.499998 0 -0.866027" range="-1 0.2" class="leg_joint_param"/>
