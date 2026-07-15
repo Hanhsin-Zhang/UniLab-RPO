@@ -25,9 +25,16 @@
   </worldbody>
 
   <sensor>
-    <!-- foot contact (for feet_force/feet_air_time reward) -->
-    <contact name="left_foot_contact"  geom1="left_foot_geom"  geom2="floor" data="force"/>
-    <contact name="right_foot_contact" geom1="right_foot_geom" geom2="floor" data="force"/>
+    <!-- foot contact (data="found" on 4 corner spheres per foot, G1-style).
+         Aggregate in code: any sphere touching → foot in contact. -->
+    <contact name="left_foot_contact_0"  geom1="left_fs0"  geom2="floor" data="found" num="1" reduce="mindist"/>
+    <contact name="left_foot_contact_1"  geom1="left_fs1"  geom2="floor" data="found" num="1" reduce="mindist"/>
+    <contact name="left_foot_contact_2"  geom1="left_fs2"  geom2="floor" data="found" num="1" reduce="mindist"/>
+    <contact name="left_foot_contact_3"  geom1="left_fs3"  geom2="floor" data="found" num="1" reduce="mindist"/>
+    <contact name="right_foot_contact_0" geom1="right_fs0" geom2="floor" data="found" num="1" reduce="mindist"/>
+    <contact name="right_foot_contact_1" geom1="right_fs1" geom2="floor" data="found" num="1" reduce="mindist"/>
+    <contact name="right_foot_contact_2" geom1="right_fs2" geom2="floor" data="found" num="1" reduce="mindist"/>
+    <contact name="right_foot_contact_3" geom1="right_fs3" geom2="floor" data="found" num="1" reduce="mindist"/>
 
     <!-- termination contact: torso + base_link -->
     <contact name="torso_contact" geom1="torso_geom" geom2="floor" data="force"/>
@@ -60,7 +67,7 @@
     <key
       name="stand"
       qpos="
-        0 0 0.803  1 0 0 0
+        0 0 0.78  1 0 0 0
         0 0 -0.1 0.3 -0.2 0
         0 0 -0.1 0.3 -0.2 0
         0

@@ -42,7 +42,8 @@ class Sensor(LocomotionSensor):
     foot_quat: tuple[str, str] = ("left_foot_quat", "right_foot_quat")
     foot_linvel: tuple[str, str] = ("left_foot_linvel", "right_foot_linvel")
     knee_pos: tuple[str, str] = ("left_knee_pos", "right_knee_pos")
-    foot_contact_force: tuple[str, str] = ("left_foot_contact", "right_foot_contact")
+    foot_contact_sensors_left: tuple[str, ...] = tuple(f"left_foot_contact_{i}" for i in range(4))
+    foot_contact_sensors_right: tuple[str, ...] = tuple(f"right_foot_contact_{i}" for i in range(4))
     # thigh_yaw / thigh_roll have no collision in URDF (commented out).
     # undesired contacts covers all non-foot bodies that have collision geometry,
     # matching roboparty's regex body_names="(?!.*ankle_roll.*).*".

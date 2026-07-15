@@ -18,6 +18,14 @@
     </default>
     <default class="collision">
       <geom type="capsule" rgba=".2 .6 .2 .35" contype="1" conaffinity="0" group="3"/>
+      <default class="foot_sphere">
+        <!-- tiny contact-sensing spheres at sole corners (priority<floor) -->
+        <geom type="sphere" size="0.005" rgba=".9 .5 .3 .4" priority="1" friction="0.6" condim="3" group="3"/>
+      </default>
+      <default class="foot_capsule">
+        <!-- sole-contact capsule proxies -->
+        <geom type="capsule" size="0.010" rgba=".2 .7 .3 .3" friction="0.6" condim="3" group="3"/>
+      </default>
     </default>
     <default class="leg_position">
       <position ctrllimited="true" forcelimited="true" kp="100" kv="3.3" forcerange="-120 120"/>
@@ -92,7 +100,7 @@
     <!-- <light directional="true" diffuse=".4 .4 .4" specular="0.1 0.1 0.1" pos="0 0 5.0" dir="0 0 -1" castshadow="false"/>
     <light directional="true" diffuse=".6 .6 .6" specular="0.2 0.2 0.2" pos="0 0 4" dir="0 0 -1"/>
     <geom name="ground" type="plane" size="0 0 1" pos="0.001 0 0" quat="1 0 0 0" material="matplane" condim="1" conaffinity="15" group="0"/> -->
-    <body name="base_link" pos="0 0 0.803">
+    <body name="base_link" pos="0 0 0.78">
       <site name="imu" size="0.01" pos="0.0 0 0.0"/>
       <inertial pos="-0.04700769 -0.00000239 -0.00862801" mass="5.51295532" fullinertia="0.03052646 0.01536233 0.03006209 0.00000063 -0.00079063 0.00000026"/>
       <joint name="floating_base_joint" type="free" limited="false"/>
@@ -129,7 +137,27 @@
                   <inertial pos="0.01454282 0.00284825 -0.02908608" mass="0.33517651" fullinertia="0.00013432 0.00054303 0.00058883 0.00001389 0.00002909 -0.00001883"/>
                   <joint name="left_ankle_roll_joint" pos="0 0 0" axis="1 0 0" range="-0.5 0.5" class="leg_joint_param" frictionloss="0.05"/>
                   <geom class="visual" rgba="0.898039 0.917647 0.929412 1" mesh="left_ankle_roll_link"/>
-                  <geom name="left_foot_geom" class="collision" type="mesh" mesh="left_ankle_roll_link"/>
+                  <!-- Foot collision proxies (keep old mesh commented for reference):
+                       <geom name="left_foot_geom" class="collision" type="mesh" mesh="left_ankle_roll_link"/>
+                       STL bbox (ankle_roll_link frame):
+                         X: -0.054 ~ 0.104   Y: -0.029 ~ 0.048   Z: -0.045 ~ 0.011
+                       Sole plane: z ≈ -0.04
+                       Tuning guide (see scene_flat.xml floor priority=2):
+                         - foot_capsule fromto="heel_x heel_y sole_z toe_x toe_y sole_z"
+                         - foot_sphere  pos="x y z"  (corners of sole)
+                         - Capsule size=0.008 (radius); Sphere size=0.005 (radius)
+                         - 5 capsules: middle 3 full-length (x=-0.05→0.10), outer 2 shorter (x=-0.05→0.06)
+                         - 4 spheres at sole corners for contact sensing
+                  -->
+                  <geom name="left_fs0" class="foot_sphere" pos="-0.052  0.028 -0.043"/>
+                  <geom name="left_fs1" class="foot_sphere" pos="-0.052 -0.028 -0.043"/>
+                  <geom name="left_fs2" class="foot_sphere" pos=" 0.070  0.028 -0.043"/>
+                  <geom name="left_fs3" class="foot_sphere" pos=" 0.070 -0.028 -0.043"/>
+                  <geom class="foot_capsule" fromto="-0.042  0.024 -0.038  0.058  0.024 -0.038"/>
+                  <geom class="foot_capsule" fromto="-0.052  0.012 -0.038  0.095  0.012 -0.038"/>
+                  <geom class="foot_capsule" fromto="-0.052  0.000 -0.038  0.100  0.000 -0.038"/>
+                  <geom class="foot_capsule" fromto="-0.052 -0.012 -0.038  0.095 -0.012 -0.038"/>
+                  <geom class="foot_capsule" fromto="-0.042 -0.024 -0.038  0.058 -0.024 -0.038"/>
                 </body>
               </body>
             </body>
@@ -166,7 +194,16 @@
                   <inertial pos="0.01454282 -0.00284825 -0.02908608" mass="0.33517651" fullinertia="0.00013432 0.00054303 0.00058883 -0.00001388 0.00002909 0.00001883"/>
                   <joint name="right_ankle_roll_joint" pos="0 0 0" axis="1 0 0" range="-0.5 0.5" class="leg_joint_param" frictionloss="0.05"/>
                   <geom class="visual" rgba="0.898039 0.917647 0.929412 1" mesh="right_ankle_roll_link"/>
-                  <geom name="right_foot_geom" class="collision" type="mesh" mesh="right_ankle_roll_link"/>
+                  <!-- Foot collision proxies (mirror of left foot, Y signs flipped for symmetry) -->
+                  <geom name="right_fs0" class="foot_sphere" pos="-0.052  0.028 -0.043"/>
+                  <geom name="right_fs1" class="foot_sphere" pos="-0.052 -0.028 -0.043"/>
+                  <geom name="right_fs2" class="foot_sphere" pos=" 0.070  0.028 -0.043"/>
+                  <geom name="right_fs3" class="foot_sphere" pos=" 0.070 -0.028 -0.043"/>
+                  <geom class="foot_capsule" fromto="-0.042  0.024 -0.038  0.058  0.024 -0.038"/>
+                  <geom class="foot_capsule" fromto="-0.052  0.012 -0.038  0.095  0.012 -0.038"/>
+                  <geom class="foot_capsule" fromto="-0.052  0.000 -0.038  0.100  0.000 -0.038"/>
+                  <geom class="foot_capsule" fromto="-0.052 -0.012 -0.038  0.095 -0.012 -0.038"/>
+                  <geom class="foot_capsule" fromto="-0.042 -0.024 -0.038  0.058 -0.024 -0.038"/>
                 </body>
               </body>
             </body>
