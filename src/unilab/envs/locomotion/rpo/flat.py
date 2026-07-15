@@ -6,6 +6,7 @@ from typing import Any
 import numpy as np
 
 from unilab.assets import ASSETS_ROOT_PATH
+from unilab.dr import ResetPlan
 from unilab.base import registry
 from unilab.base.backend import create_backend, env_backend_kwargs
 from unilab.base.np_env import NpEnvState
@@ -13,6 +14,8 @@ from unilab.base.scene import SceneCfg
 from unilab.dtype_config import get_global_dtype
 from unilab.envs.locomotion.common import rewards
 from unilab.envs.locomotion.common.commands import Commands
+from unilab.envs.locomotion.common.domain_rand import DomainRandConfig
+from unilab.envs.locomotion.common.dr_provider import LocomotionDRProvider
 from unilab.envs.locomotion.common.rewards import RewardContext
 from unilab.envs.locomotion.rpo.base import RPOBaseCfg, RPOBaseEnv
 from unilab.utils.rotation import np_quat_apply, np_quat_apply_inverse, np_yaw_quat
@@ -38,6 +41,48 @@ class RPOFlatRewardConfig:
     stand_still_body_vel_threshold: float = 0.5
     stand_still_pos_weight: float = 1.0
     stand_still_vel_weight: float = 0.04
+
+
+@dataclass
+class RPOFlatDomainRandConfig(DomainRandConfig):
+    randomize_base_mass: bool = True
+    added_mass_range: list[float] = field(default_factory=lambda: [-3.0, 3.0])
+
+    randomize_body_mass: bool = True
+    body_mass_multiplier_range: list[float] = field(default_factory=lambda: [0.9, 1.1])
+
+    random_com: bool = True
+    com_offset_x: list[float] = field(default_factory=lambda: [-0.025, 0.025])
+    com_offset_y: list[float] = field(default_factory=lambda: [-0.025, 0.025])
+    com_offset_z: list[float] = field(default_factory=lambda: [-0.05, 0.05])
+
+    randomize_ground_friction: bool = True
+    ground_friction_multiplier_range: list[float] = field(default_factory=lambda: [0.3, 1.6])
+
+    randomize_dof_armature: bool = True
+    dof_armature_multiplier_range: list[float] = field(default_factory=lambda: [0.5, 1.5])
+
+    randomize_kp: bool = True
+    kp_multiplier_range: list[float] = field(default_factory=lambda: [0.9, 1.1])
+
+    randomize_kd: bool = True
+    kd_multiplier_range: list[float] = field(default_factory=lambda: [0.9, 1.1])
+
+    push_robots: bool = True
+    push_interval: int = 625  # ~12.5s at ctrl_dt=0.02, close to IsaacLab's 10-15s
+    max_force: list[float] = field(default_factory=lambda: [1.0, 1.0, 0.5])
+    push_body_name: str | None = "base_link"
+
+    randomize_reset_joint_qpos_scale: bool = True
+    reset_joint_qpos_scale_range: list[float] = field(default_factory=lambda: [0.5, 1.5])
+
+    randomize_reset_base_qvel: bool = True
+    reset_base_qvel_range: list[list[float]] = field(
+        default_factory=lambda: [
+            [-0.5, -0.5, -0.2, -0.52, -0.52, -0.78],
+            [0.5, 0.5, 0.2, 0.52, 0.52, 0.78],
+        ]
+    )
 
 
 def _default_reward_config() -> RPOFlatRewardConfig:
@@ -95,7 +140,155 @@ class RPOFlatCfg(RPOBaseCfg):
     contact_force_threshold: float = 1.0
     rel_standing_envs: float = 0.2
     command_resample_interval: float = 10.0
+    domain_rand: RPOFlatDomainRandConfig = field(default_factory=RPOFlatDomainRandConfig)
     reward_config: RPOFlatRewardConfig = field(default_factory=_default_reward_config)
+
+
+class RPOFlatDomainRandomizationProvider(LocomotionDRProvider):
+    def __init__(
+        self,
+        *,
+        base_kp: np.ndarray | None = None,
+        base_kd: np.ndarray | None = None,
+        base_body_mass: np.ndarray | None = None,
+        base_geom_friction: np.ndarray | None = None,
+        ground_geom_id: int | None = None,
+        base_dof_armature: np.ndarray | None = None,
+    ):
+        self._base_kp = base_kp
+        self._base_kd = base_kd
+        self._base_body_mass = base_body_mass
+        self._base_geom_friction = base_geom_friction
+        self._ground_geom_id = ground_geom_id
+        self._base_dof_armature = base_dof_armature
+
+    def _get_base_actuator_gains(self, env: Any) -> tuple[np.ndarray | None, np.ndarray | None]:
+        return self._base_kp, self._base_kd
+
+    def _get_reset_randomization_baselines(
+        self, env: Any
+    ) -> tuple[np.ndarray | None, np.ndarray | None, int | None, np.ndarray | None]:
+        return (
+            self._base_body_mass,
+            self._base_geom_friction,
+            self._ground_geom_id,
+            self._base_dof_armature,
+        )
+
+    def _sample_commands(self, env: Any, num_reset: int) -> np.ndarray:
+        return env._sample_commands(num_reset)
+
+    def _get_qvel_limit(self, env: Any) -> float:
+        if not getattr(env.cfg.domain_rand, "randomize_reset_base_qvel", False):
+            return 0.0
+        qvel_range = np.asarray(env.cfg.domain_rand.reset_base_qvel_range, dtype=np.float64)
+        if qvel_range.shape != (2, 6):
+            raise ValueError(
+                "domain_rand.reset_base_qvel_range must have shape (2, 6), "
+                f"got {qvel_range.shape}"
+            )
+        return float(np.max(np.abs(qvel_range)))
+
+    def build_reset_plan(self, env: Any, env_ids: np.ndarray) -> ResetPlan:
+        plan = super().build_reset_plan(env, env_ids)
+        num_reset = len(env_ids)
+        qpos = np.asarray(plan.qpos, dtype=get_global_dtype()).copy()
+        qvel = np.asarray(plan.qvel, dtype=get_global_dtype()).copy()
+        info_updates = dict(plan.info_updates)
+        domain_rand = env.cfg.domain_rand
+
+        if getattr(domain_rand, "randomize_reset_base_qvel", False) and num_reset > 0:
+            qvel_range = np.asarray(domain_rand.reset_base_qvel_range, dtype=np.float64)
+            if qvel_range.shape != (2, 6):
+                raise ValueError(
+                    "domain_rand.reset_base_qvel_range must have shape (2, 6), "
+                    f"got {qvel_range.shape}"
+                )
+            low = np.minimum(qvel_range[0], qvel_range[1])
+            high = np.maximum(qvel_range[0], qvel_range[1])
+            qvel[:, 0:6] = np.asarray(
+                np.random.uniform(low=low, high=high, size=(num_reset, 6)),
+                dtype=qvel.dtype,
+            )
+
+        if getattr(domain_rand, "randomize_reset_joint_qpos_scale", False) and num_reset > 0:
+            low, high = domain_rand.reset_joint_qpos_scale_range
+            joint_qpos = qpos[:, -env._num_action :]
+            joint_qpos *= np.asarray(
+                np.random.uniform(low, high, size=(num_reset, env._num_action)),
+                dtype=joint_qpos.dtype,
+            )
+            if env._joint_range is not None:
+                lower = env._joint_range[:, 0]
+                upper = env._joint_range[:, 1]
+                np.clip(joint_qpos, lower, upper, out=joint_qpos)
+
+        zero_joint = np.zeros((num_reset, env._num_action), dtype=get_global_dtype())
+        info_updates.update(
+            {
+                "current_actions": zero_joint.copy(),
+                "last_actions": zero_joint.copy(),
+                "previous_actions": zero_joint.copy(),
+                "prev_dof_vel": zero_joint.copy(),
+                "torques": zero_joint.copy(),
+                "qacc": zero_joint.copy(),
+                "current_air_time": np.zeros((num_reset, 2), dtype=get_global_dtype()),
+                "current_contact_time": np.zeros((num_reset, 2), dtype=get_global_dtype()),
+                "terminated_raw": np.zeros((num_reset,), dtype=bool),
+                "terminated_contact": np.zeros((num_reset,), dtype=bool),
+            }
+        )
+        return ResetPlan(
+            env_ids=plan.env_ids,
+            qpos=qpos,
+            qvel=qvel,
+            info_updates=info_updates,
+            randomization=plan.randomization,
+        )
+
+    def build_reset_observation(
+        self, env: Any, env_ids: np.ndarray, info_updates: dict[str, Any]
+    ) -> dict[str, np.ndarray]:
+        env._last_foot_contact[env_ids] = False
+        env._current_air_time[env_ids] = 0.0
+        env._current_contact_time[env_ids] = 0.0
+        env._foot_pos_w[env_ids] = 0.0
+
+        gyro = env.get_gyro()[env_ids]
+        base_quat = env._backend.get_base_quat()[env_ids]
+        projected_gravity = env._projected_gravity(base_quat)
+        dof_pos = env.get_dof_pos()[env_ids]
+        dof_vel = env.get_dof_vel()[env_ids]
+        linvel = env.get_local_linvel()[env_ids]
+        foot_pos = env.get_foot_pos()[env_ids]
+        joint_torque = env._get_joint_torque()[env_ids]
+        joint_acc = np.zeros_like(dof_vel)
+
+        actor_current = env._build_actor_obs(
+            info_updates,
+            gyro=gyro,
+            projected_gravity=projected_gravity,
+            dof_pos=dof_pos,
+            dof_vel=dof_vel,
+        )
+        critic_current = env._build_critic_obs(
+            info_updates,
+            actor_obs_clean=actor_current["critic_actor_clean"],
+            linvel=linvel,
+            dof_pos=dof_pos,
+            dof_vel=dof_vel,
+            foot_pos=foot_pos,
+            feet_contact=env._last_foot_contact[env_ids],
+            feet_air_time=env._current_air_time[env_ids],
+            joint_torque=joint_torque,
+            joint_acc=joint_acc,
+        )
+        env._fill_histories(env_ids, actor_current["actor"], critic_current)
+        info_updates["prev_dof_vel"] = dof_vel.copy()
+        return {
+            "obs": env._actor_hist[env_ids].reshape(len(env_ids), -1),
+            "critic": env._critic_hist[env_ids].reshape(len(env_ids), -1),
+        }
 
 
 @registry.env("RPOFlat", sim_backend="mujoco")
@@ -109,10 +302,10 @@ class RPOFlatEnv(RPOBaseEnv):
             num_envs,
             cfg.sim_dt,
             base_name=cfg.asset.base_name,
+            push_body_name=cfg.domain_rand.push_body_name,
             **env_backend_kwargs(cfg),
         )
         super().__init__(cfg, backend, num_envs)
-        self._backend.materialize()
 
         self._enable_reward_log = True
         self._reward_cfg = cfg.reward_config
@@ -142,128 +335,22 @@ class RPOFlatEnv(RPOBaseEnv):
         self._torso_joint_idx = np.array([12, 14, 15, 16, 17, 19, 20, 21, 22], dtype=np.intp)  # torso+arm_roll/yaw+elbow
         self._arms_joint_idx = np.array([13, 18], dtype=np.intp)              # arm_pitch
         self._init_reward_functions()
+        dr_provider = RPOFlatDomainRandomizationProvider(
+            base_kp=np.asarray(self._backend.get_actuator_gains()[0], dtype=np.float64),
+            base_kd=np.asarray(self._backend.get_actuator_gains()[1], dtype=np.float64),
+            base_body_mass=np.asarray(self._backend.get_body_mass(), dtype=np.float64),
+            base_geom_friction=np.asarray(self._backend.get_geom_friction(), dtype=np.float64),
+            ground_geom_id=int(self._backend.get_geom_id(cfg.asset.ground)),
+            base_dof_armature=np.asarray(self._backend.get_dof_armature(), dtype=np.float64),
+        )
+        self._init_domain_randomization(dr_provider)
 
     @property
     def obs_groups_spec(self) -> dict[str, int]:
         return {"obs": 78 * self._actor_hist_len, "critic": 133 * self._critic_hist_len}
 
     def reset(self, env_indices: np.ndarray) -> tuple[dict[str, np.ndarray], dict]:
-        env_ids = np.asarray(env_indices, dtype=np.int32)
-        num_reset = int(env_ids.shape[0])
-        dtype = get_global_dtype()
-
-        qpos = np.tile(self._init_qpos, (num_reset, 1))
-        qvel = np.tile(self._init_qvel, (num_reset, 1))
-        if num_reset:
-            qpos[:, 0:2] += np.asarray(
-                np.random.uniform(-0.5, 0.5, (num_reset, 2)), dtype=dtype
-            )
-        self._backend.set_state(env_ids, qpos, qvel)
-        if num_reset:
-            self._last_foot_contact[env_ids] = False
-            self._current_air_time[env_ids] = 0.0
-            self._current_contact_time[env_ids] = 0.0
-            self._foot_pos_w[env_ids] = 0.0
-
-        commands = self._sample_commands(num_reset)
-        info_updates: dict[str, np.ndarray] = {
-            "current_actions": np.zeros((num_reset, self._num_action), dtype=dtype),
-            "last_actions": np.zeros((num_reset, self._num_action), dtype=dtype),
-            "previous_actions": np.zeros((num_reset, self._num_action), dtype=dtype),
-            "commands": commands,
-            "torques": np.zeros((num_reset, self._num_action), dtype=dtype),
-            "qacc": np.zeros((num_reset, self._num_action), dtype=dtype),
-            "current_air_time": np.zeros((num_reset, 2), dtype=dtype),
-            "current_contact_time": np.zeros((num_reset, 2), dtype=dtype),
-            "terminated_raw": np.zeros((num_reset,), dtype=bool),
-            "terminated_contact": np.zeros((num_reset,), dtype=bool),
-        }
-
-        if self._state is not None:
-            self._state.info["steps"][env_ids] = 0
-            if "current_actions" not in self._state.info:
-                self._state.info["current_actions"] = np.zeros(
-                    (self._num_envs, self._num_action), dtype=dtype
-                )
-            if "last_actions" not in self._state.info:
-                self._state.info["last_actions"] = np.zeros(
-                    (self._num_envs, self._num_action), dtype=dtype
-                )
-            if "previous_actions" not in self._state.info:
-                self._state.info["previous_actions"] = np.zeros(
-                    (self._num_envs, self._num_action), dtype=dtype
-                )
-            if "commands" not in self._state.info:
-                self._state.info["commands"] = np.zeros((self._num_envs, 3), dtype=dtype)
-            if "prev_dof_vel" not in self._state.info:
-                self._state.info["prev_dof_vel"] = np.zeros(
-                    (self._num_envs, self._num_action), dtype=dtype
-                )
-            if "torques" not in self._state.info:
-                self._state.info["torques"] = np.zeros(
-                    (self._num_envs, self._num_action), dtype=dtype
-                )
-            if "qacc" not in self._state.info:
-                self._state.info["qacc"] = np.zeros(
-                    (self._num_envs, self._num_action), dtype=dtype
-                )
-            if "current_air_time" not in self._state.info:
-                self._state.info["current_air_time"] = np.zeros((self._num_envs, 2), dtype=dtype)
-            if "current_contact_time" not in self._state.info:
-                self._state.info["current_contact_time"] = np.zeros(
-                    (self._num_envs, 2), dtype=dtype
-                )
-            if "terminated_raw" not in self._state.info:
-                self._state.info["terminated_raw"] = np.zeros((self._num_envs,), dtype=bool)
-            if "terminated_contact" not in self._state.info:
-                self._state.info["terminated_contact"] = np.zeros((self._num_envs,), dtype=bool)
-            self._state.info["current_actions"][env_ids] = info_updates["current_actions"]
-            self._state.info["last_actions"][env_ids] = info_updates["last_actions"]
-            self._state.info["previous_actions"][env_ids] = info_updates["previous_actions"]
-            self._state.info["commands"][env_ids] = info_updates["commands"]
-            self._state.info["torques"][env_ids] = info_updates["torques"]
-            self._state.info["qacc"][env_ids] = info_updates["qacc"]
-            self._state.info["current_air_time"][env_ids] = info_updates["current_air_time"]
-            self._state.info["current_contact_time"][env_ids] = info_updates["current_contact_time"]
-            self._state.info["terminated_raw"][env_ids] = info_updates["terminated_raw"]
-            self._state.info["terminated_contact"][env_ids] = info_updates["terminated_contact"]
-            self._state.terminated[env_ids] = False
-            self._state.truncated[env_ids] = False
-
-        gyro = self.get_gyro()
-        base_quat = self._backend.get_base_quat()
-        projected_gravity = self._projected_gravity(base_quat)
-        dof_pos = self.get_dof_pos()
-        dof_vel = self.get_dof_vel()
-        linvel = self.get_local_linvel()
-        foot_pos = self.get_foot_pos()
-        actor_current = self._build_actor_obs(
-            info_updates,
-            gyro=gyro[env_ids],
-            projected_gravity=projected_gravity[env_ids],
-            dof_pos=dof_pos[env_ids],
-            dof_vel=dof_vel[env_ids],
-        )
-        critic_current = self._build_critic_obs(
-            info_updates,
-            actor_obs_clean=actor_current["critic_actor_clean"],
-            linvel=linvel[env_ids],
-            dof_pos=dof_pos[env_ids],
-            dof_vel=dof_vel[env_ids],
-            foot_pos=foot_pos[env_ids],
-            feet_contact=self._last_foot_contact[env_ids],
-            feet_air_time=self._current_air_time[env_ids],
-            joint_torque=self._get_joint_torque()[env_ids],
-            joint_acc=np.zeros_like(dof_vel[env_ids]),
-        )
-        self._fill_histories(env_ids, actor_current["actor"], critic_current)
-        if self._state is not None:
-            self._state.info["prev_dof_vel"][env_ids] = dof_vel[env_ids]
-        obs = {
-            "obs": self._actor_hist[env_ids].reshape(num_reset, -1),
-            "critic": self._critic_hist[env_ids].reshape(num_reset, -1),
-        }
-        return obs, info_updates
+        return super().reset(env_indices)
 
     def update_state(self, state: NpEnvState) -> NpEnvState:
         gyro = self.get_gyro()

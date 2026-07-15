@@ -90,3 +90,30 @@ reward:
 env:
   rel_standing_envs: 0.2
   command_resample_interval: 10.0
+  domain_rand:
+    randomize_base_mass: true
+    added_mass_range: [-3.0, 3.0]
+    randomize_body_mass: true
+    body_mass_multiplier_range: [0.9, 1.1]
+    random_com: true
+    com_offset_x: [-0.025, 0.025]
+    com_offset_y: [-0.025, 0.025]
+    com_offset_z: [-0.05, 0.05]
+    randomize_ground_friction: true
+    ground_friction_multiplier_range: [0.3, 1.6]
+    randomize_dof_armature: true
+    dof_armature_multiplier_range: [0.5, 1.5]
+    randomize_kp: true
+    kp_multiplier_range: [0.9, 1.1]
+    randomize_kd: true
+    kd_multiplier_range: [0.9, 1.1]
+    push_robots: true
+    push_interval: 625
+    max_force: [1.0, 1.0, 0.5]
+    push_body_name: base_link
+    randomize_reset_joint_qpos_scale: true
+    reset_joint_qpos_scale_range: [0.5, 1.5]
+    randomize_reset_base_qvel: true
+    reset_base_qvel_range:
+      - [-0.5, -0.5, -0.2, -0.52, -0.52, -0.78]
+      - [0.5, 0.5, 0.2, 0.52, 0.52, 0.78]
