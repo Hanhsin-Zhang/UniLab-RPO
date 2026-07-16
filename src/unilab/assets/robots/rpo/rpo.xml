@@ -16,12 +16,8 @@
     <default class="visual">
       <geom type="mesh" density="0" contype="0" conaffinity="0" group="2"/>
     </default>
-    <default class="collision">
-      <geom type="capsule" rgba=".2 .6 .2 .35" contype="1" conaffinity="0" group="3"/>
-      <default class="foot_sphere">
-        <!-- tiny contact-sensing spheres at sole corners (priority<floor) -->
-        <geom type="sphere" size="0.005" rgba=".9 .5 .3 .4" priority="1" friction="0.6" condim="3" group="3"/>
-      </default>
+      <default class="collision">
+        <geom type="capsule" rgba=".2 .6 .2 .35" contype="1" conaffinity="0" group="3"/>
       <default class="foot_capsule">
         <!-- sole-contact capsule proxies -->
         <geom type="capsule" size="0.010" rgba=".2 .7 .3 .3" friction="0.6" condim="3" group="3"/>
@@ -144,20 +140,20 @@
                        Sole plane: z ≈ -0.04
                        Tuning guide (see scene_flat.xml floor priority=2):
                          - foot_capsule fromto="heel_x heel_y sole_z toe_x toe_y sole_z"
-                         - foot_sphere  pos="x y z"  (corners of sole)
+                         - 4 probe sites at sole corners for height
                          - Capsule size=0.008 (radius); Sphere size=0.005 (radius)
                          - 5 capsules: middle 3 full-length (x=-0.05→0.10), outer 2 shorter (x=-0.05→0.06)
-                         - 4 spheres at sole corners for contact sensing
+                       - 4 spheres/sites at sole corners for height probing
                   -->
-                  <geom name="left_fs0" class="foot_sphere" pos="-0.052  0.028 -0.043"/>
-                  <geom name="left_fs1" class="foot_sphere" pos="-0.052 -0.028 -0.043"/>
-                  <geom name="left_fs2" class="foot_sphere" pos=" 0.070  0.028 -0.043"/>
-                  <geom name="left_fs3" class="foot_sphere" pos=" 0.070 -0.028 -0.043"/>
-                  <geom class="foot_capsule" fromto="-0.042  0.024 -0.038  0.058  0.024 -0.038"/>
-                  <geom class="foot_capsule" fromto="-0.052  0.012 -0.038  0.095  0.012 -0.038"/>
-                  <geom class="foot_capsule" fromto="-0.052  0.000 -0.038  0.100  0.000 -0.038"/>
-                  <geom class="foot_capsule" fromto="-0.052 -0.012 -0.038  0.095 -0.012 -0.038"/>
-                  <geom class="foot_capsule" fromto="-0.042 -0.024 -0.038  0.058 -0.024 -0.038"/>
+                  <site name="left_foot_probe_0" size="0.003" pos="-0.052  0.028 -0.043"/>
+                  <site name="left_foot_probe_1" size="0.003" pos="-0.052 -0.028 -0.043"/>
+                  <site name="left_foot_probe_2" size="0.003" pos=" 0.070  0.028 -0.043"/>
+                  <site name="left_foot_probe_3" size="0.003" pos=" 0.070 -0.028 -0.043"/>
+                  <geom name="left_fc0" class="foot_capsule" fromto="-0.042  0.024 -0.038  0.058  0.024 -0.038"/>
+                  <geom name="left_fc1" class="foot_capsule" fromto="-0.052  0.012 -0.038  0.095  0.012 -0.038"/>
+                  <geom name="left_fc2" class="foot_capsule" fromto="-0.052  0.000 -0.038  0.100  0.000 -0.038"/>
+                  <geom name="left_fc3" class="foot_capsule" fromto="-0.052 -0.012 -0.038  0.095 -0.012 -0.038"/>
+                  <geom name="left_fc4" class="foot_capsule" fromto="-0.042 -0.024 -0.038  0.058 -0.024 -0.038"/>
                 </body>
               </body>
             </body>
@@ -195,15 +191,15 @@
                   <joint name="right_ankle_roll_joint" pos="0 0 0" axis="1 0 0" range="-0.5 0.5" class="leg_joint_param" frictionloss="0.05"/>
                   <geom class="visual" rgba="0.898039 0.917647 0.929412 1" mesh="right_ankle_roll_link"/>
                   <!-- Foot collision proxies (mirror of left foot, Y signs flipped for symmetry) -->
-                  <geom name="right_fs0" class="foot_sphere" pos="-0.052  0.028 -0.043"/>
-                  <geom name="right_fs1" class="foot_sphere" pos="-0.052 -0.028 -0.043"/>
-                  <geom name="right_fs2" class="foot_sphere" pos=" 0.070  0.028 -0.043"/>
-                  <geom name="right_fs3" class="foot_sphere" pos=" 0.070 -0.028 -0.043"/>
-                  <geom class="foot_capsule" fromto="-0.042  0.024 -0.038  0.058  0.024 -0.038"/>
-                  <geom class="foot_capsule" fromto="-0.052  0.012 -0.038  0.095  0.012 -0.038"/>
-                  <geom class="foot_capsule" fromto="-0.052  0.000 -0.038  0.100  0.000 -0.038"/>
-                  <geom class="foot_capsule" fromto="-0.052 -0.012 -0.038  0.095 -0.012 -0.038"/>
-                  <geom class="foot_capsule" fromto="-0.042 -0.024 -0.038  0.058 -0.024 -0.038"/>
+                  <site name="right_foot_probe_0" size="0.003" pos="-0.052  0.028 -0.043"/>
+                  <site name="right_foot_probe_1" size="0.003" pos="-0.052 -0.028 -0.043"/>
+                  <site name="right_foot_probe_2" size="0.003" pos=" 0.070  0.028 -0.043"/>
+                  <site name="right_foot_probe_3" size="0.003" pos=" 0.070 -0.028 -0.043"/>
+                  <geom name="right_fc0" class="foot_capsule" fromto="-0.042  0.024 -0.038  0.058  0.024 -0.038"/>
+                  <geom name="right_fc1" class="foot_capsule" fromto="-0.052  0.012 -0.038  0.095  0.012 -0.038"/>
+                  <geom name="right_fc2" class="foot_capsule" fromto="-0.052  0.000 -0.038  0.100  0.000 -0.038"/>
+                  <geom name="right_fc3" class="foot_capsule" fromto="-0.052 -0.012 -0.038  0.095 -0.012 -0.038"/>
+                  <geom name="right_fc4" class="foot_capsule" fromto="-0.042 -0.024 -0.038  0.058 -0.024 -0.038"/>
                 </body>
               </body>
             </body>
@@ -377,10 +373,18 @@
     <framepos name="left_foot_pos" objtype="site" objname="left_foot"/>
     <framequat name="left_foot_quat" objtype="site" objname="left_foot"/>
     <framelinvel name="left_foot_linvel" objtype="site" objname="left_foot"/>
+    <framepos name="left_foot_probe_0_pos" objtype="site" objname="left_foot_probe_0"/>
+    <framepos name="left_foot_probe_1_pos" objtype="site" objname="left_foot_probe_1"/>
+    <framepos name="left_foot_probe_2_pos" objtype="site" objname="left_foot_probe_2"/>
+    <framepos name="left_foot_probe_3_pos" objtype="site" objname="left_foot_probe_3"/>
     <framepos name="left_knee_pos" objtype="body" objname="left_knee_link"/>
     <framepos name="right_foot_pos" objtype="site" objname="right_foot"/>
     <framequat name="right_foot_quat" objtype="site" objname="right_foot"/>
     <framelinvel name="right_foot_linvel" objtype="site" objname="right_foot"/>
+    <framepos name="right_foot_probe_0_pos" objtype="site" objname="right_foot_probe_0"/>
+    <framepos name="right_foot_probe_1_pos" objtype="site" objname="right_foot_probe_1"/>
+    <framepos name="right_foot_probe_2_pos" objtype="site" objname="right_foot_probe_2"/>
+    <framepos name="right_foot_probe_3_pos" objtype="site" objname="right_foot_probe_3"/>
     <framepos name="right_knee_pos" objtype="body" objname="right_knee_link"/>
     <gyro name="angular-velocity" site="imu" noise="0.005" cutoff="34.9"/>
     <velocimeter name="linear-velocity" site="imu" noise="0.001" cutoff="30"/>

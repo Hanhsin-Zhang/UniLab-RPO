@@ -42,8 +42,10 @@ class Sensor(LocomotionSensor):
     foot_quat: tuple[str, str] = ("left_foot_quat", "right_foot_quat")
     foot_linvel: tuple[str, str] = ("left_foot_linvel", "right_foot_linvel")
     knee_pos: tuple[str, str] = ("left_knee_pos", "right_knee_pos")
-    foot_contact_sensors_left: tuple[str, ...] = tuple(f"left_foot_contact_{i}" for i in range(4))
-    foot_contact_sensors_right: tuple[str, ...] = tuple(f"right_foot_contact_{i}" for i in range(4))
+    foot_contact_sensors_left: tuple[str, ...] = tuple(f"left_foot_contact_{i}" for i in range(5))
+    foot_contact_sensors_right: tuple[str, ...] = tuple(f"right_foot_contact_{i}" for i in range(5))
+    foot_height_probe_pos_left: tuple[str, ...] = tuple(f"left_foot_probe_{i}_pos" for i in range(4))
+    foot_height_probe_pos_right: tuple[str, ...] = tuple(f"right_foot_probe_{i}_pos" for i in range(4))
     # thigh_yaw / thigh_roll have no collision in URDF (commented out).
     # undesired contacts covers all non-foot bodies that have collision geometry,
     # matching roboparty's regex body_names="(?!.*ankle_roll.*).*".
@@ -171,3 +173,10 @@ class RPOBaseEnv(LocomotionBaseEnv):
     def get_knee_pos(self) -> np.ndarray:
         knee_pos = [self._backend.get_sensor_data(name) for name in self._cfg.sensor.knee_pos]
         return np.stack(knee_pos, axis=1)
+
+    def get_foot_probe_pos(self) -> np.ndarray:
+        left = [self._backend.get_sensor_data(name) for name in self._cfg.sensor.foot_height_probe_pos_left]
+        right = [self._backend.get_sensor_data(name) for name in self._cfg.sensor.foot_height_probe_pos_right]
+        left_stack = np.stack(left, axis=1)
+        right_stack = np.stack(right, axis=1)
+        return np.stack([left_stack, right_stack], axis=1)

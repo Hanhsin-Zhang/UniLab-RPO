@@ -25,16 +25,18 @@
   </worldbody>
 
   <sensor>
-    <!-- foot contact (data="found" on 4 corner spheres per foot, G1-style).
-         Aggregate in code: any sphere touching → foot in contact. -->
-    <contact name="left_foot_contact_0"  geom1="left_fs0"  geom2="floor" data="found" num="1" reduce="mindist"/>
-    <contact name="left_foot_contact_1"  geom1="left_fs1"  geom2="floor" data="found" num="1" reduce="mindist"/>
-    <contact name="left_foot_contact_2"  geom1="left_fs2"  geom2="floor" data="found" num="1" reduce="mindist"/>
-    <contact name="left_foot_contact_3"  geom1="left_fs3"  geom2="floor" data="found" num="1" reduce="mindist"/>
-    <contact name="right_foot_contact_0" geom1="right_fs0" geom2="floor" data="found" num="1" reduce="mindist"/>
-    <contact name="right_foot_contact_1" geom1="right_fs1" geom2="floor" data="found" num="1" reduce="mindist"/>
-    <contact name="right_foot_contact_2" geom1="right_fs2" geom2="floor" data="found" num="1" reduce="mindist"/>
-    <contact name="right_foot_contact_3" geom1="right_fs3" geom2="floor" data="found" num="1" reduce="mindist"/>
+    <!-- foot contact now comes from the 5 sole capsules per foot.
+         Corner spheres stay as non-colliding visual probes for foot-height estimation. -->
+    <contact name="left_foot_contact_0"  geom1="left_fc0"  geom2="floor" data="found" num="1" reduce="mindist"/>
+    <contact name="left_foot_contact_1"  geom1="left_fc1"  geom2="floor" data="found" num="1" reduce="mindist"/>
+    <contact name="left_foot_contact_2"  geom1="left_fc2"  geom2="floor" data="found" num="1" reduce="mindist"/>
+    <contact name="left_foot_contact_3"  geom1="left_fc3"  geom2="floor" data="found" num="1" reduce="mindist"/>
+    <contact name="left_foot_contact_4"  geom1="left_fc4"  geom2="floor" data="found" num="1" reduce="mindist"/>
+    <contact name="right_foot_contact_0" geom1="right_fc0" geom2="floor" data="found" num="1" reduce="mindist"/>
+    <contact name="right_foot_contact_1" geom1="right_fc1" geom2="floor" data="found" num="1" reduce="mindist"/>
+    <contact name="right_foot_contact_2" geom1="right_fc2" geom2="floor" data="found" num="1" reduce="mindist"/>
+    <contact name="right_foot_contact_3" geom1="right_fc3" geom2="floor" data="found" num="1" reduce="mindist"/>
+    <contact name="right_foot_contact_4" geom1="right_fc4" geom2="floor" data="found" num="1" reduce="mindist"/>
 
     <!-- termination contact: torso + base_link -->
     <contact name="torso_contact" geom1="torso_geom" geom2="floor" data="force"/>

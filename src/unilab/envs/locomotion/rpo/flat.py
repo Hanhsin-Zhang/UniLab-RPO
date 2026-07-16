@@ -30,9 +30,9 @@ class RPOFlatRewardConfig:
     undesired_contact_threshold: float = 1.0
     feet_air_time_threshold: float = 0.4
     feet_air_time_command_threshold: float = 0.01
-    feet_height_ankle_height: float = 0.04
     feet_height_threshold: float = 0.02
     feet_height_command_threshold: float = 0.01
+    feet_height_probe_reduction: str = "min"
     feet_distance_min: float = 0.16
     feet_distance_max: float = 0.50
     knee_distance_min: float = 0.18
@@ -73,8 +73,8 @@ class RPOFlatDomainRandConfig(DomainRandConfig):
     max_force: list[float] = field(default_factory=lambda: [1.0, 1.0, 0.5])
     push_body_name: str | None = "base_link"
 
-    randomize_reset_joint_qpos_scale: bool = True
-    reset_joint_qpos_scale_range: list[float] = field(default_factory=lambda: [0.5, 1.5])
+    randomize_reset_joint_qpos: bool = True
+    reset_joint_qpos_range: list[float] = field(default_factory=lambda: [-0.05, 0.05])
 
     randomize_reset_base_qvel: bool = True
     reset_base_qvel_range: list[list[float]] = field(
@@ -211,11 +211,13 @@ class RPOFlatDomainRandomizationProvider(LocomotionDRProvider):
                 dtype=qvel.dtype,
             )
 
-        if getattr(domain_rand, "randomize_reset_joint_qpos_scale", False) and num_reset > 0:
-            low, high = domain_rand.reset_joint_qpos_scale_range
+        if getattr(domain_rand, "randomize_reset_joint_qpos", False) and num_reset > 0:
+            low, high = domain_rand.reset_joint_qpos_range
+            low_f = float(min(low, high))
+            high_f = float(max(low, high))
             joint_qpos = qpos[:, -env._num_action :]
-            joint_qpos *= np.asarray(
-                np.random.uniform(low, high, size=(num_reset, env._num_action)),
+            joint_qpos += np.asarray(
+                np.random.uniform(low_f, high_f, size=(num_reset, env._num_action)),
                 dtype=joint_qpos.dtype,
             )
             if env._joint_range is not None:
@@ -253,6 +255,7 @@ class RPOFlatDomainRandomizationProvider(LocomotionDRProvider):
         env._current_air_time[env_ids] = 0.0
         env._current_contact_time[env_ids] = 0.0
         env._foot_pos_w[env_ids] = 0.0
+        env._foot_probe_pos_w[env_ids] = 0.0
 
         gyro = env.get_gyro()[env_ids]
         base_quat = env._backend.get_base_quat()[env_ids]
@@ -320,6 +323,7 @@ class RPOFlatEnv(RPOBaseEnv):
         self._current_air_time = np.zeros((num_envs, 2), dtype=dtype)
         self._current_contact_time = np.zeros((num_envs, 2), dtype=dtype)
         self._foot_pos_w = np.zeros((num_envs, 2, 3), dtype=dtype)
+        self._foot_probe_pos_w = np.zeros((num_envs, 2, 4, 3), dtype=dtype)
         self._feet_pos_b = np.zeros((num_envs, 2, 3), dtype=dtype)
         self._knee_pos_b = np.zeros((num_envs, 2, 3), dtype=dtype)
         self._foot_quat = np.zeros((num_envs, 2, 4), dtype=dtype)
@@ -363,8 +367,10 @@ class RPOFlatEnv(RPOBaseEnv):
         base_pos = np.asarray(self._backend.get_base_pos(), dtype=get_global_dtype())
         base_height = base_pos[:, 2]
         foot_pos = self.get_foot_pos()
+        foot_probe_pos = self.get_foot_probe_pos()
         knee_pos = self.get_knee_pos()
         self._foot_pos_w = np.asarray(foot_pos, dtype=get_global_dtype())
+        self._foot_probe_pos_w = np.asarray(foot_probe_pos, dtype=get_global_dtype())
         self._feet_pos_b = self._body_pos_b_from_world(
             np.asarray(foot_pos, dtype=get_global_dtype()),
             base_pos=base_pos,
@@ -377,7 +383,7 @@ class RPOFlatEnv(RPOBaseEnv):
         )
         self._foot_quat = np.asarray(self.get_foot_quat(), dtype=get_global_dtype())
         joint_torque = self._get_joint_torque()
-        # G1-style contact: aggregate 4 sphere found-sensors per foot
+        # Aggregate 5 sole-capsule found-sensors per foot.
         feet_contact = self._get_aggregated_foot_contact()
         self._current_air_time[~feet_contact] += float(self._cfg.ctrl_dt)
         self._current_air_time[feet_contact] = 0.0
@@ -519,7 +525,7 @@ class RPOFlatEnv(RPOBaseEnv):
         raise ValueError(f"Expected scalar sensor values, got shape {sensor_array.shape}")
 
     def _get_aggregated_foot_contact(self) -> np.ndarray:
-        """Aggregate 4 sphere found-sensors per foot into binary contact (G1-style)."""
+        """Aggregate 5 sole-capsule found-sensors per foot into binary contact."""
         left = [self._scalarize_sensor_values(self._backend.get_sensor_data(name))
                 for name in self._cfg.sensor.foot_contact_sensors_left]
         right = [self._scalarize_sensor_values(self._backend.get_sensor_data(name))
@@ -527,6 +533,19 @@ class RPOFlatEnv(RPOBaseEnv):
         left_contact = np.any(np.stack(left, axis=1) > 0.5, axis=1)
         right_contact = np.any(np.stack(right, axis=1) > 0.5, axis=1)
         return np.stack([left_contact, right_contact], axis=1)
+
+    def _get_foot_height_from_probes(self) -> np.ndarray:
+        """Estimate sole height from four corner probes on each foot."""
+        probe_height = np.asarray(self._foot_probe_pos_w[:, :, :, 2], dtype=get_global_dtype())
+        reduction = str(self._reward_cfg.feet_height_probe_reduction).strip().lower()
+        if reduction == "mean":
+            return np.asarray(np.mean(probe_height, axis=2), dtype=get_global_dtype())
+        if reduction == "min":
+            return np.asarray(np.min(probe_height, axis=2), dtype=get_global_dtype())
+        raise ValueError(
+            "reward.feet_height_probe_reduction must be either 'min' or 'mean', "
+            f"got {self._reward_cfg.feet_height_probe_reduction!r}"
+        )
 
     def _get_joint_torque(self) -> np.ndarray:
         return np.asarray(
@@ -711,9 +730,8 @@ class RPOFlatEnv(RPOBaseEnv):
     def _reward_feet_height(self, ctx: RewardContext) -> np.ndarray:
         contacts = np.asarray(self._last_foot_contact, dtype=bool)
         single_stance = np.sum(contacts.astype(np.int32), axis=1) == 1
-        ankle_height = float(self._reward_cfg.feet_height_ankle_height)
         threshold = float(self._reward_cfg.feet_height_threshold)
-        foot_height = np.clip(self._foot_pos_w[:, :, 2] - ankle_height, 0.0, 1.0)
+        foot_height = np.clip(self._get_foot_height_from_probes(), 0.0, 1.0)
         rew_pos = foot_height > threshold
         reward = np.where((~contacts) & single_stance[:, None], rew_pos.astype(get_global_dtype()), 0.0).sum(axis=1)
         cmd = np.asarray(ctx.info.get("commands", np.zeros((ctx.num_envs, 3))), dtype=get_global_dtype())
@@ -834,7 +852,8 @@ class RPOFlatEnv(RPOBaseEnv):
         joint_acc: np.ndarray,
     ) -> np.ndarray:
         num_envs = actor_obs_clean.shape[0]
-        feet_height = np.clip(foot_pos[:, :, 2] - 0.04, 0.0, 1.0).astype(get_global_dtype())
+        del foot_pos
+        feet_height = np.clip(self._get_foot_height_from_probes(), 0.0, 1.0).astype(get_global_dtype())
 
         return np.concatenate(
             [

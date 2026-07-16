@@ -75,9 +75,9 @@ reward:
   undesired_contact_threshold: 1.0
   feet_air_time_threshold: 0.4
   feet_air_time_command_threshold: 0.01
-  feet_height_ankle_height: 0.04
   feet_height_threshold: 0.02
   feet_height_command_threshold: 0.01
+  feet_height_probe_reduction: min
   feet_distance_min: 0.16
   feet_distance_max: 0.50
   knee_distance_min: 0.18
@@ -111,8 +111,8 @@ env:
     push_interval: 625
     max_force: [1.0, 1.0, 0.5]
     push_body_name: base_link
-    randomize_reset_joint_qpos_scale: true
-    reset_joint_qpos_scale_range: [0.5, 1.5]
+    randomize_reset_joint_qpos: true
+    reset_joint_qpos_range: [-0.15, 0.15]
     randomize_reset_base_qvel: true
     reset_base_qvel_range:
       - [-0.5, -0.5, -0.2, -0.52, -0.52, -0.78]
