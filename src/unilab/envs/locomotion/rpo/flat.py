@@ -263,7 +263,7 @@ class RPOFlatDomainRandomizationProvider(LocomotionDRProvider):
         dof_pos = env.get_dof_pos()[env_ids]
         dof_vel = env.get_dof_vel()[env_ids]
         linvel = env.get_local_linvel()[env_ids]
-        foot_pos = env.get_foot_pos()[env_ids]
+        foot_probe_pos = env.get_foot_probe_pos()[env_ids]
         joint_torque = env._get_joint_torque()[env_ids]
         joint_acc = np.zeros_like(dof_vel)
 
@@ -280,7 +280,7 @@ class RPOFlatDomainRandomizationProvider(LocomotionDRProvider):
             linvel=linvel,
             dof_pos=dof_pos,
             dof_vel=dof_vel,
-            foot_pos=foot_pos,
+            foot_probe_pos=foot_probe_pos,
             feet_contact=env._last_foot_contact[env_ids],
             feet_air_time=env._current_air_time[env_ids],
             joint_torque=joint_torque,
@@ -416,7 +416,7 @@ class RPOFlatEnv(RPOBaseEnv):
             linvel=linvel,
             dof_pos=dof_pos,
             dof_vel=dof_vel,
-            foot_pos=foot_pos,
+            foot_probe_pos=self._foot_probe_pos_w,
             feet_contact=feet_contact,
             feet_air_time=self._current_air_time,
             joint_torque=joint_torque,
@@ -534,9 +534,11 @@ class RPOFlatEnv(RPOBaseEnv):
         right_contact = np.any(np.stack(right, axis=1) > 0.5, axis=1)
         return np.stack([left_contact, right_contact], axis=1)
 
-    def _get_foot_height_from_probes(self) -> np.ndarray:
+    def _get_foot_height_from_probes(self, foot_probe_pos: np.ndarray | None = None) -> np.ndarray:
         """Estimate sole height from four corner probes on each foot."""
-        probe_height = np.asarray(self._foot_probe_pos_w[:, :, :, 2], dtype=get_global_dtype())
+        if foot_probe_pos is None:
+            foot_probe_pos = self._foot_probe_pos_w
+        probe_height = np.asarray(foot_probe_pos[:, :, :, 2], dtype=get_global_dtype())
         reduction = str(self._reward_cfg.feet_height_probe_reduction).strip().lower()
         if reduction == "mean":
             return np.asarray(np.mean(probe_height, axis=2), dtype=get_global_dtype())
@@ -845,15 +847,19 @@ class RPOFlatEnv(RPOBaseEnv):
         linvel: np.ndarray,
         dof_pos: np.ndarray,
         dof_vel: np.ndarray,
-        foot_pos: np.ndarray,
+        foot_probe_pos: np.ndarray,
         feet_contact: np.ndarray,
         feet_air_time: np.ndarray,
         joint_torque: np.ndarray,
         joint_acc: np.ndarray,
     ) -> np.ndarray:
         num_envs = actor_obs_clean.shape[0]
-        del foot_pos
-        feet_height = np.clip(self._get_foot_height_from_probes(), 0.0, 1.0).astype(get_global_dtype())
+        del info, dof_pos, dof_vel, num_envs
+        feet_height = np.clip(
+            self._get_foot_height_from_probes(foot_probe_pos),
+            0.0,
+            1.0,
+        ).astype(get_global_dtype())
 
         return np.concatenate(
             [
