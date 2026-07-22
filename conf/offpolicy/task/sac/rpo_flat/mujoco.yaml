@@ -46,8 +46,8 @@ algo:
 
   # TODO(tune): 当前 SAC runtime 使用单个 hidden_dim 配置 actor/critic 主干宽度，
   # 不能直接照搬 PPO 的 [512, 256, 128] 多层写法。
-  actor_hidden_dim: 512
-  critic_hidden_dim: 768
+  actor_hidden_dim: 256
+  critic_hidden_dim: 512
 
   # Distributional critic 的 atom 数先沿用全局 SAC 默认。
   num_atoms: 101
@@ -74,6 +74,7 @@ reward:
   scales:
     track_lin_vel_xy_exp: 4.0
     track_ang_vel_z_exp: 2.0
+    alive: 10.0
     lin_vel_z_l2: -0.2
     ang_vel_xy_l2: -0.1
     flat_orientation_l2: -1.0
@@ -85,7 +86,6 @@ reward:
     energy: -1.0e-4
     undesired_contacts: -1.0
     dof_pos_limits: -1.0
-    termination_penalty: -50.0
     feet_air_time: 0.8
     feet_contact_without_cmd: 0.1
     feet_height: 0.5
@@ -123,8 +123,13 @@ env:
   # 先与 PPO 任务 owner 对齐时域，减少算法切换带来的任务分布变化。
   sim_dt: 0.0025
   ctrl_dt: 0.02
-  rel_standing_envs: 0.2
+  # SAC: disable standing-command mixture; keep PPO owner unchanged.
+  rel_standing_envs: 0.0
   command_resample_interval: 10.0
+  
+  # 网络结构改动待测
+  # actor_obs_history_length: 3
+  # critic_obs_history_length: 3
 
   control_config:
     # TODO(tune): RPOBase 默认 action_scale=0.25；PPO owner 未覆盖该值。

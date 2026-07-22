@@ -428,9 +428,7 @@ class RPOFlatEnv(RPOBaseEnv):
         state.info["current_air_time"] = self._current_air_time.copy()
         state.info["current_contact_time"] = self._current_contact_time.copy()
         state.info["prev_dof_vel"] = dof_vel.copy()
-        terminated_contact = self._compute_contact_terminated()
-        state.info["terminated_contact"] = terminated_contact.copy()
-        terminated = self._compute_terminated(base_height, projected_gravity, terminated_contact)
+        terminated = self._compute_terminated(base_height, projected_gravity)
         state.info["terminated_raw"] = terminated.copy()
         reward = self._compute_reward(
             state.info,
@@ -443,7 +441,6 @@ class RPOFlatEnv(RPOBaseEnv):
             base_height=base_height,
         )
         log = state.info.setdefault("log", {})
-        log["termination/contact_rate"] = float(np.mean(terminated_contact.astype(get_global_dtype())))
         obs = {
             "obs": self._actor_hist.reshape(self._num_envs, -1),
             "critic": self._critic_hist.reshape(self._num_envs, -1),
@@ -603,6 +600,7 @@ class RPOFlatEnv(RPOBaseEnv):
             "undesired_contacts": self._reward_undesired_contacts,
             "dof_pos_limits": rewards.joint_pos_limits,
             "termination_penalty": self._reward_termination_penalty,
+            "alive": rewards.alive,
             "feet_air_time": self._reward_feet_air_time,
             "feet_contact_without_cmd": self._reward_feet_contact_without_cmd,
             "feet_height": self._reward_feet_height,
@@ -658,15 +656,12 @@ class RPOFlatEnv(RPOBaseEnv):
         self,
         base_height: np.ndarray,
         projected_gravity: np.ndarray,
-        contact_terminated: np.ndarray,
     ) -> np.ndarray:
         upright_cos = np.clip(-projected_gravity[:, 2], -1.0, 1.0)
         tilt = np.arccos(upright_cos)
         max_tilt_rad = np.deg2rad(self._reward_cfg.max_tilt_deg)
         return np.asarray(
-            contact_terminated
-            | (base_height < self._reward_cfg.min_base_height)
-            | (tilt > max_tilt_rad),
+            (base_height < self._reward_cfg.min_base_height) | (tilt > max_tilt_rad),
             dtype=bool,
         )
 
@@ -734,8 +729,8 @@ class RPOFlatEnv(RPOBaseEnv):
         single_stance = np.sum(contacts.astype(np.int32), axis=1) == 1
         threshold = float(self._reward_cfg.feet_height_threshold)
         foot_height = np.clip(self._get_foot_height_from_probes(), 0.0, 1.0)
-        rew_pos = foot_height > threshold
-        reward = np.where((~contacts) & single_stance[:, None], rew_pos.astype(get_global_dtype()), 0.0).sum(axis=1)
+        reward_per_foot = np.clip(foot_height / max(threshold, 1.0e-6), 0.0, 1.0).astype(get_global_dtype())
+        reward = np.where((~contacts) & single_stance[:, None], reward_per_foot, 0.0).sum(axis=1)
         cmd = np.asarray(ctx.info.get("commands", np.zeros((ctx.num_envs, 3))), dtype=get_global_dtype())
         moving = (np.linalg.norm(cmd[:, :2], axis=1) + np.abs(cmd[:, 2])) > float(
             self._reward_cfg.feet_height_command_threshold
