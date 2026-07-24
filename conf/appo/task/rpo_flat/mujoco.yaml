@@ -1,0 +1,120 @@
+# @package _global_
+training:
+  task_name: RPOFlat
+  sim_backend: mujoco
+  logger: tensorboard
+
+algo:
+  seed: 42
+  num_envs: 4096
+  steps_per_env: 24
+  max_iterations: 2001
+  save_interval: 200
+  # empirical_normalization: false
+  experiment_name: rpo_flat
+  run_name: ""
+  # policy:
+  #   init_noise_std: 1.0
+  #   actor_hidden_dims: [512, 256, 128]
+  #   critic_hidden_dims: [512, 256, 128]
+  #   activation: elu
+  algorithm:
+    value_loss_coef: 1.0
+    use_clipped_value_loss: true
+    clip_param: 0.2
+    entropy_coef: 0.005
+    num_learning_epochs: 5
+    num_mini_batches: 4
+    learning_rate: 1.0e-4
+    schedule: adaptive
+    gamma: 0.994
+    lam: 0.9
+    desired_kl: 0.01
+    max_grad_norm: 1.0
+
+  # obs_groups:
+  #   actor:
+  #     - actor
+  #   critic:
+  #     - critic
+
+reward:
+  scales:
+    track_lin_vel_xy_exp: 4.0
+    track_ang_vel_z_exp: 2.0
+    lin_vel_z_l2: -0.2
+    ang_vel_xy_l2: -0.1
+    flat_orientation_l2: -1.0
+    action_rate_l2: -0.02
+    action_smoothness_l2: -0.02
+    joint_torques_l2: -1.0e-5
+    joint_vel_l2: -2.0e-4
+    dof_acc_l2: -2.5e-7
+    energy: -1.0e-4
+    undesired_contacts: -1.0
+    dof_pos_limits: -1.0
+    termination_penalty: -200.0
+    feet_air_time: 0.8
+    feet_contact_without_cmd: 0.1
+    feet_height: 0.5
+    feet_orientation_l2: -0.1
+    feet_distance: 0.1
+    knee_distance: 0.1
+    stand_still: -0.2
+    upward: 0.4
+    joint_deviation_hip: -0.03
+    joint_deviation_legs: -0.01
+    joint_deviation_torso: -0.5
+    joint_deviation_arms: -0.06
+  tracking_sigma: 0.15
+  min_base_height: 0.22
+  max_tilt_deg: 70.0
+  undesired_contact_threshold: 1.0
+  feet_air_time_threshold: 0.4
+  feet_air_time_command_threshold: 0.01
+  feet_height_threshold: 0.02
+  feet_height_command_threshold: 0.01
+  feet_height_probe_reduction: min
+  feet_distance_min: 0.16
+  feet_distance_max: 0.50
+  knee_distance_min: 0.18
+  knee_distance_max: 0.35
+  stand_still_command_threshold: 0.01
+  stand_still_body_vel_threshold: 0.5
+  stand_still_pos_weight: 1.0
+  stand_still_vel_weight: 0.04
+
+env:
+  sim_dt: 0.0025
+  ctrl_dt: 0.02
+  rel_standing_envs: 0.2
+  command_resample_interval: 10.0
+  actor_obs_history_length: 3
+  critic_obs_history_length: 3
+  domain_rand:
+    randomize_base_mass: true
+    added_mass_range: [-3.0, 3.0]
+    randomize_body_mass: true
+    body_mass_multiplier_range: [0.9, 1.1]
+    random_com: true
+    com_offset_x: [-0.025, 0.025]
+    com_offset_y: [-0.025, 0.025]
+    com_offset_z: [-0.05, 0.05]
+    randomize_ground_friction: true
+    ground_friction_multiplier_range: [0.3, 1.6]
+    randomize_dof_armature: true
+    dof_armature_multiplier_range: [0.5, 1.5]
+    randomize_kp: true
+    kp_multiplier_range: [0.9, 1.1]
+    randomize_kd: true
+    kd_multiplier_range: [0.9, 1.1]
+    push_robots: true
+    push_interval: 625
+    max_force: [1.0, 1.0, 0.5]
+    push_body_name: base_link
+    randomize_reset_joint_qpos: true
+    reset_joint_qpos_range: [-0.1, 0.1]
+    randomize_reset_base_qvel: true
+    reset_base_qvel_range:
+      - [-0.5, -0.5, -0.2, -0.52, -0.52, -0.78]
+      - [0.5, 0.5, 0.2, 0.52, 0.52, 0.78]
