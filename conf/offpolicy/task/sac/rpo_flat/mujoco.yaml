@@ -1,109 +1,53 @@
 # @package _global_
 
 training:
-  # 任务身份仍然绑定到现有的 RPOFlat env 注册项。
-  # 这里不改 task_name，避免为了切到 SAC 而破坏 env owner 契约。
   task_name: RPOFlat
   sim_backend: mujoco
-
-  # 先沿用 tensorboard，便于和现有 PPO 训练日志对齐比较。
   logger: tensorboard
 
-  # 第一版先关闭自动回放，优先把训练稳定性跑通。
-  # 若需要观察策略效果，可改为 false，并适当增加 play_steps。
-  no_play: false
-  play_env_num: 16
-  play_steps: 400
 
 algo:
   seed: 42
-
-  # TODO(tune): SAC 的有效 batch 更重，且 RPOFlat actor/critic 观测维度较大。
-  # 第一版建议从 2048 起步，先保证显存和吞吐稳定，再视训练速度上调到 4096。
   num_envs: 4096
 
-  # TODO(tune): 这里保留与 PPO 接近的训练轮数，便于横向比较收敛曲线。
-  max_iterations: 8000
-  save_interval: 500
-
-  # TODO(tune): replay warmup 步数过小可能导致早期 Q 值不稳定；
-  # 过大则会拖慢进入学习阶段的时间。这里先采用保守的小值作为起步。
-  learning_starts: 20
-
-  # TODO(tune): 每个 env step 执行多少次 learner update。
-  # RPOFlat 的 reward 和观测都较复杂，建议从 4 起步，训练不充分再尝试 8。
-  updates_per_step: 8
-
-  # TODO(tune): 先显式对齐 PPO 的 gamma=0.994，避免直接退回 SAC 默认 0.97。
-  gamma: 0.994
-
-  # TODO(tune): tau 越大 target network 跟随越快，但也可能增大训练抖动。
+  learning_starts: 100
+  max_iterations: 6000
+  save_interval: 1000
+  updates_per_step: 4
+  gamma: 0.98
   tau: 0.0625
-
-  # TODO(tune): 这里沿用 SAC 公共默认学习率，建议结合 reward 尺度与 Q 值稳定性继续调整。
-  actor_lr: 3.0e-4
-  critic_lr: 3.0e-4
-
-  # TODO(tune): 当前 SAC runtime 使用单个 hidden_dim 配置 actor/critic 主干宽度，
-  # 不能直接照搬 PPO 的 [512, 256, 128] 多层写法。
+  actor_lr: 2.0e-4
+  critic_lr: 2.0e-4
   actor_hidden_dim: 256
   critic_hidden_dim: 512
-
-  # Distributional critic 的 atom 数先沿用全局 SAC 默认。
   num_atoms: 101
-
-  # 与当前 PPO owner 一致，先关闭观测归一化，避免引入额外变量。
   obs_normalization: false
-
-  # RPOFlat 当前未实现可直接复用的 symmetry augmentation，因此先关闭。
   use_symmetry: false
-
   algo_params:
-    # TODO(tune): alpha_init 和 target_entropy_ratio 会直接影响探索强度。
-    # 第一版先沿用仓库 SAC 默认，再依据早期熵和动作抖动情况调整。
     alpha_lr: 3.0e-4
-    alpha_init: 0.01
+    alpha_init: 0.001
     target_entropy_ratio: 0.0
-
-    # 第一版保持默认关闭梯度裁剪，若后续出现 critic 梯度爆炸可再开启。
-    max_grad_norm: 0.0
+    max_grad_norm: 0.8
 
 reward:
-  # 这一整块基本从 PPO owner 迁移，目标是先保持任务定义一致，
-  # 把算法差异尽量限制在 SAC 自身超参数上。
   scales:
-    track_lin_vel_xy_exp: 4.0
-    track_ang_vel_z_exp: 2.0
-    alive: 10.0
-    lin_vel_z_l2: -0.2
-    ang_vel_xy_l2: -0.1
-    flat_orientation_l2: -1.0
-    action_rate_l2: -0.02
-    action_smoothness_l2: -0.02
-    joint_torques_l2: -1.0e-5
-    joint_vel_l2: -2.0e-4
-    dof_acc_l2: -2.5e-7
-    energy: -1.0e-4
-    undesired_contacts: -1.0
-    dof_pos_limits: -1.0
-    feet_air_time: 0.8
-    feet_contact_without_cmd: 0.1
-    feet_height: 0.5
-    feet_orientation_l2: -0.1
-    feet_distance: 0.1
-    knee_distance: 0.1
-    stand_still: -0.2
-    upward: 0.6
-    joint_deviation_hip: -0.03
-    joint_deviation_legs: -0.01
-    joint_deviation_torso: -0.5
-    joint_deviation_arms: -0.06
-
-  # TODO(tune): 若 SAC 在速度跟踪上收敛慢，可优先检查 tracking_sigma
-  # 与几项 tracking reward 的相对尺度，而不是先大改网络结构。
-  tracking_sigma: 0.15
-  min_base_height: 0.22
-  max_tilt_deg: 70.0
+    tracking_lin_vel: 2.0
+    tracking_ang_vel: 1.5
+    alive: 2.0
+    upward: 1.0
+    penalty_ang_vel_xy: -2.0
+    penalty_orientation: -10.0
+    penalty_action_rate: -2.0
+    penalty_feet_ori: -5.0
+    feet_phase: 4.0
+  tracking_sigma: 0.25
+  base_height_target: 0.75
+  min_base_height: 0.4
+  max_tilt_deg: 40.0
+  gait_frequency: 1.5
+  feet_phase_swing_height: 0.09
+  feet_phase_tracking_sigma: 0.02
+  min_forward_speed_for_gait_reward: 0.0
   undesired_contact_threshold: 1.0
   feet_air_time_threshold: 0.4
   feet_air_time_command_threshold: 0.01
@@ -120,61 +64,58 @@ reward:
   stand_still_vel_weight: 0.04
 
 env:
-  # 先与 PPO 任务 owner 对齐时域，减少算法切换带来的任务分布变化。
   sim_dt: 0.0025
   ctrl_dt: 0.02
-  # SAC: disable standing-command mixture; keep PPO owner unchanged.
+  # SAC stage0: disable standing-command mixture to avoid learning a trivial
+  # "hold default pose then fall" solution.
   rel_standing_envs: 0.0
   command_resample_interval: 10.0
-  
-  # 网络结构改动待测
-  # actor_obs_history_length: 3
-  # critic_obs_history_length: 3
-
+  gait_phase_init_mode: "offset_phase"
+  actor_obs_history_length: 3
+  critic_obs_history_length: 3
+  curriculum:
+    enabled: true
+    initial_scale: 0.5
+    min_scale: 0.5
+    max_scale: 1.0
+    level_down_threshold: 150.0
+    level_up_threshold: 750.0
+    degree: 0.001
   control_config:
-    # TODO(tune): RPOBase 默认 action_scale=0.25；PPO owner 未覆盖该值。
-    # 这里先保持默认，不显式改写，避免一开始同时改变控制幅值和算法。
-    action_scale: 0.25
-
+    action_scale: 0.5
   noise_config:
-    # TODO(tune): RPOBase 默认噪声相对较强。先保持 base 默认值，只有在 SAC
-    # 早期明显学不动或观测噪声导致 Q 值不稳定时，再考虑下调。
     level: 1.0
-    scale_joint_angle: 0.02
-    scale_joint_vel: 0.3
-    scale_gyro: 0.02
-    scale_gravity: 0.05
-    scale_linvel: 0.1
+    scale_joint_angle: 0.00
+    scale_joint_vel: 0.0
+    scale_gyro: 0.00
+    scale_gravity: 0.00
+    scale_linvel: 0.0
 
   domain_rand:
     # 这一块基本延续 PPO owner，优先保持训练分布一致。
-    randomize_base_mass: true
+    randomize_base_mass: false
     added_mass_range: [-3.0, 3.0]
-    randomize_body_mass: true
+    randomize_body_mass: false
     body_mass_multiplier_range: [0.9, 1.1]
-    random_com: true
+    random_com: false
     com_offset_x: [-0.025, 0.025]
     com_offset_y: [-0.025, 0.025]
     com_offset_z: [-0.05, 0.05]
-    randomize_ground_friction: true
+    randomize_ground_friction: false
     ground_friction_multiplier_range: [0.3, 1.6]
-    randomize_dof_armature: true
+    randomize_dof_armature: false
     dof_armature_multiplier_range: [0.5, 1.5]
-    randomize_kp: true
+    randomize_kp: false
     kp_multiplier_range: [0.9, 1.1]
-    randomize_kd: true
+    randomize_kd: false
     kd_multiplier_range: [0.9, 1.1]
-    push_robots: true
+    push_robots: false
     push_interval: 625
     max_force: [1.0, 1.0, 0.5]
     push_body_name: base_link
     randomize_reset_joint_qpos: true
-
-    # TODO(tune): env 默认是 [-0.05, 0.05]，PPO owner 把范围扩大到了 [-0.1, 0.1]。
-    # 这里先继承 PPO 的更强随机化；若 SAC 早期难以起步，可先回退到默认范围。
-    reset_joint_qpos_range: [-0.05, 0.05]
-
-    randomize_reset_base_qvel: true
+    reset_joint_qpos_range: [-0.1, 0.1]
+    randomize_reset_base_qvel: false
     reset_base_qvel_range:
       - [-0.5, -0.5, -0.2, -0.52, -0.52, -0.78]
       - [0.5, 0.5, 0.2, 0.52, 0.52, 0.78]

@@ -9,6 +9,7 @@ from unilab.assets import ASSETS_ROOT_PATH
 from unilab.dr import ResetPlan
 from unilab.base import registry
 from unilab.base.backend import create_backend, env_backend_kwargs
+from unilab.base.curriculum import EpisodeLengthTracker, PenaltyCurriculum
 from unilab.base.np_env import NpEnvState
 from unilab.base.scene import SceneCfg
 from unilab.dtype_config import get_global_dtype
@@ -25,9 +26,14 @@ from unilab.utils.rotation import np_quat_apply, np_quat_apply_inverse, np_yaw_q
 class RPOFlatRewardConfig:
     scales: dict[str, float]
     tracking_sigma: float = 0.25
+    base_height_target: float = 0.78
     min_base_height: float = 0.22
     max_tilt_deg: float = 70.0
     undesired_contact_threshold: float = 1.0
+    gait_frequency: float = 1.5
+    feet_phase_swing_height: float = 0.09
+    feet_phase_tracking_sigma: float = 0.04
+    min_forward_speed_for_gait_reward: float = 0.0
     feet_air_time_threshold: float = 0.4
     feet_air_time_command_threshold: float = 0.01
     feet_height_threshold: float = 0.02
@@ -85,6 +91,65 @@ class RPOFlatDomainRandConfig(DomainRandConfig):
     )
 
 
+@dataclass
+class CurriculumConfig:
+    enabled: bool = False
+    initial_scale: float = 0.5
+    min_scale: float = 0.5
+    max_scale: float = 1.0
+    level_down_threshold: float = 150.0
+    level_up_threshold: float = 750.0
+    degree: float = 0.001
+
+
+def sample_gait_phase_pairs(num_samples: int, mode: str) -> np.ndarray:
+    if mode == "independent":
+        return np.asarray(
+            np.column_stack(
+                [
+                    np.random.uniform(0.0, 2.0 * np.pi, size=(num_samples,)),
+                    np.random.uniform(0.0, 2.0 * np.pi, size=(num_samples,)),
+                ]
+            ),
+            dtype=get_global_dtype(),
+        )
+
+    phase = np.random.uniform(0.0, 2.0 * np.pi, size=(num_samples,))
+    return np.asarray(np.column_stack([phase, phase + np.pi]), dtype=get_global_dtype())
+
+
+def compute_feet_phase_height_targets(
+    gait_phase: np.ndarray, swing_height: float
+) -> tuple[np.ndarray, np.ndarray]:
+    def cubic_bezier_height(phi: np.ndarray) -> np.ndarray:
+        phi_normalized = np.fmod(phi + np.pi, 2.0 * np.pi) - np.pi
+        x = (phi_normalized + np.pi) / (2.0 * np.pi)
+
+        def cubic_bezier_interpolation(
+            y_start: np.ndarray, y_end: np.ndarray, t: np.ndarray
+        ) -> np.ndarray:
+            y_diff = y_end - y_start
+            bezier = t**3 + 3.0 * (t**2 * (1.0 - t))
+            return np.asarray(y_start + y_diff * bezier, dtype=get_global_dtype())
+
+        stance = cubic_bezier_interpolation(np.zeros_like(x), np.full_like(x, swing_height), 2.0 * x)
+        swing = cubic_bezier_interpolation(
+            np.full_like(x, swing_height), np.zeros_like(x), 2.0 * x - 1.0
+        )
+        return np.where(x <= 0.5, stance, swing)
+
+    left_target = cubic_bezier_height(gait_phase[:, 0])
+    right_target = cubic_bezier_height(gait_phase[:, 1])
+    return np.asarray(left_target, dtype=get_global_dtype()), np.asarray(
+        right_target, dtype=get_global_dtype()
+    )
+
+
+def compute_forward_speed_gate(linvel: np.ndarray, min_forward_speed: float) -> np.ndarray:
+    forward_speed = np.maximum(linvel[:, 0], 0.0)
+    return np.asarray(forward_speed >= min_forward_speed, dtype=get_global_dtype())
+
+
 def _default_reward_config() -> RPOFlatRewardConfig:
     return RPOFlatRewardConfig(
         scales={
@@ -140,7 +205,9 @@ class RPOFlatCfg(RPOBaseCfg):
     contact_force_threshold: float = 1.0
     rel_standing_envs: float = 0.2
     command_resample_interval: float = 10.0
+    gait_phase_init_mode: str = "offset_phase"
     domain_rand: RPOFlatDomainRandConfig = field(default_factory=RPOFlatDomainRandConfig)
+    curriculum: CurriculumConfig = field(default_factory=CurriculumConfig)
     reward_config: RPOFlatRewardConfig = field(default_factory=_default_reward_config)
 
 
@@ -177,6 +244,14 @@ class RPOFlatDomainRandomizationProvider(LocomotionDRProvider):
 
     def _sample_commands(self, env: Any, num_reset: int) -> np.ndarray:
         return env._sample_commands(num_reset)
+
+    def _build_extra_info_updates(self, env: Any, num_reset: int) -> dict[str, np.ndarray]:
+        if not getattr(env, "_use_g1_like_profile", False):
+            return {}
+        return {"gait_phase": self._sample_gait_phase(env, num_reset)}
+
+    def _sample_gait_phase(self, env: Any, num_reset: int) -> np.ndarray:
+        return sample_gait_phase_pairs(num_reset, env.cfg.gait_phase_init_mode)
 
     def _get_qvel_limit(self, env: Any) -> float:
         if not getattr(env.cfg.domain_rand, "randomize_reset_base_qvel", False):
@@ -312,13 +387,33 @@ class RPOFlatEnv(RPOBaseEnv):
 
         self._enable_reward_log = True
         self._reward_cfg = cfg.reward_config
+        self._use_g1_like_profile = self._uses_g1_like_profile()
+        self._gait_phase_delta = float(
+            2.0 * np.pi * float(self._reward_cfg.gait_frequency) * cfg.ctrl_dt
+        )
+        self._episode_tracker: EpisodeLengthTracker | None = None
+        self._penalty_curriculum: PenaltyCurriculum | None = None
+        if cfg.curriculum.enabled:
+            self._episode_tracker = EpisodeLengthTracker(num_envs)
+            self._penalty_curriculum = PenaltyCurriculum(
+                self,
+                enabled=True,
+                initial_scale=cfg.curriculum.initial_scale,
+                min_scale=cfg.curriculum.min_scale,
+                max_scale=cfg.curriculum.max_scale,
+                level_down_threshold=cfg.curriculum.level_down_threshold,
+                level_up_threshold=cfg.curriculum.level_up_threshold,
+                degree=cfg.curriculum.degree,
+            )
         self._actor_hist_len = max(1, int(cfg.actor_obs_history_length))
         self._critic_hist_len = max(1, int(cfg.critic_obs_history_length))
         dtype = get_global_dtype()
-        actor_dim = 78
-        critic_dim = 133  # 139 - 6 (removed feet_contact_force 3D×2)
-        self._actor_hist = np.zeros((num_envs, self._actor_hist_len, actor_dim), dtype=dtype)
-        self._critic_hist = np.zeros((num_envs, self._critic_hist_len, critic_dim), dtype=dtype)
+        self._actor_obs_dim = 80 if self._use_g1_like_profile else 78
+        self._critic_obs_dim = 83 if self._use_g1_like_profile else 133
+        self._actor_hist = np.zeros((num_envs, self._actor_hist_len, self._actor_obs_dim), dtype=dtype)
+        self._critic_hist = np.zeros(
+            (num_envs, self._critic_hist_len, self._critic_obs_dim), dtype=dtype
+        )
         self._last_foot_contact = np.zeros((num_envs, 2), dtype=bool)
         self._current_air_time = np.zeros((num_envs, 2), dtype=dtype)
         self._current_contact_time = np.zeros((num_envs, 2), dtype=dtype)
@@ -351,7 +446,10 @@ class RPOFlatEnv(RPOBaseEnv):
 
     @property
     def obs_groups_spec(self) -> dict[str, int]:
-        return {"obs": 78 * self._actor_hist_len, "critic": 133 * self._critic_hist_len}
+        return {
+            "obs": self._actor_obs_dim * self._actor_hist_len,
+            "critic": self._critic_obs_dim * self._critic_hist_len,
+        }
 
     def reset(self, env_indices: np.ndarray) -> tuple[dict[str, np.ndarray], dict]:
         return super().reset(env_indices)
@@ -445,7 +543,18 @@ class RPOFlatEnv(RPOBaseEnv):
             "obs": self._actor_hist.reshape(self._num_envs, -1),
             "critic": self._critic_hist.reshape(self._num_envs, -1),
         }
-        return state.replace(obs=obs, reward=reward, terminated=terminated)
+        state = state.replace(obs=obs, reward=reward, terminated=terminated)
+        done = state.terminated | state.truncated
+        if self._episode_tracker is None or self._penalty_curriculum is None or not np.any(done):
+            return state
+
+        done_indices = np.where(done)[0]
+        episode_lengths = state.info["steps"][done_indices] + 1
+        self._episode_tracker.update(episode_lengths)
+        self._penalty_curriculum.update(self._episode_tracker.average_length)
+        log["curriculum/average_episode_length"] = float(self._episode_tracker.average_length)
+        log["curriculum/penalty_scale"] = float(self._penalty_curriculum.current_scale)
+        return state
 
     def apply_action(self, actions: np.ndarray, state: NpEnvState) -> np.ndarray:
         previous_current = state.info.get("current_actions", np.zeros_like(actions))
@@ -453,6 +562,12 @@ class RPOFlatEnv(RPOBaseEnv):
         state.info["previous_actions"] = previous_last
         state.info["last_actions"] = previous_current
         state.info["current_actions"] = actions
+        gait_phase = state.info.get("gait_phase")
+        if gait_phase is not None:
+            gait_phase = np.asarray(gait_phase, dtype=get_global_dtype())
+            gait_phase[:, 0] = (gait_phase[:, 0] + self._gait_phase_delta) % (2.0 * np.pi)
+            gait_phase[:, 1] = (gait_phase[:, 1] + self._gait_phase_delta) % (2.0 * np.pi)
+            state.info["gait_phase"] = gait_phase
         exec_actions = (
             state.info["last_actions"]
             if self._cfg.control_config.simulate_action_latency
@@ -572,6 +687,36 @@ class RPOFlatEnv(RPOBaseEnv):
         noisy_gravity = self._obs_noise(projected_gravity, noise_cfg.scale_gravity)
         noisy_diff = self._obs_noise(diff, noise_cfg.scale_joint_angle)
         noisy_dof_vel = self._obs_noise(dof_vel, noise_cfg.scale_joint_vel)
+        gait_phase = info.get("gait_phase", np.zeros((gyro.shape[0], 2), dtype=get_global_dtype()))
+        if self._use_g1_like_profile:
+            actor = np.concatenate(
+                [
+                    noisy_gyro * 0.25,
+                    -noisy_gravity,
+                    noisy_diff,
+                    noisy_dof_vel * 0.05,
+                    last_actions,
+                    commands,
+                    gait_phase,
+                ],
+                axis=1,
+                dtype=get_global_dtype(),
+            )
+            critic_actor_clean = np.concatenate(
+                [
+                    gyro * 0.25,
+                    -projected_gravity,
+                    diff,
+                    dof_vel * 0.05,
+                    last_actions,
+                    commands,
+                    gait_phase,
+                ],
+                axis=1,
+                dtype=get_global_dtype(),
+            )
+            return {"actor": actor, "critic_actor_clean": critic_actor_clean}
+
         actor = np.concatenate(
             [noisy_gyro, noisy_gravity, commands, noisy_diff, noisy_dof_vel, last_actions],
             axis=1,
@@ -588,10 +733,15 @@ class RPOFlatEnv(RPOBaseEnv):
         self._reward_fns: dict[str, Any] = {
             "track_lin_vel_xy_exp": self._reward_track_lin_vel_xy_exp,
             "track_ang_vel_z_exp": self._reward_track_ang_vel_z_exp,
+            "tracking_lin_vel": self._reward_track_lin_vel_xy_exp,
+            "tracking_ang_vel": self._reward_track_ang_vel_z_exp,
             "lin_vel_z_l2": rewards.lin_vel_z,
             "ang_vel_xy_l2": rewards.ang_vel_xy,
+            "penalty_ang_vel_xy": rewards.ang_vel_xy,
             "flat_orientation_l2": rewards.orientation,
+            "penalty_orientation": rewards.orientation,
             "action_rate_l2": rewards.action_rate,
+            "penalty_action_rate": rewards.action_rate,
             "action_smoothness_l2": rewards.action_smooth,
             "joint_torques_l2": rewards.dof_torques_l2,
             "joint_vel_l2": self._reward_joint_vel_l2,
@@ -601,10 +751,14 @@ class RPOFlatEnv(RPOBaseEnv):
             "dof_pos_limits": rewards.joint_pos_limits,
             "termination_penalty": self._reward_termination_penalty,
             "alive": rewards.alive,
+            "base_height": rewards.base_height,
+            "pose": rewards.similar_to_default,
             "feet_air_time": self._reward_feet_air_time,
+            "feet_phase": self._reward_feet_phase,
             "feet_contact_without_cmd": self._reward_feet_contact_without_cmd,
             "feet_height": self._reward_feet_height,
             "feet_orientation_l2": self._reward_feet_orientation_l2,
+            "penalty_feet_ori": self._reward_feet_orientation_l2,
             "feet_distance": self._reward_feet_distance,
             "knee_distance": self._reward_knee_distance,
             "stand_still": self._reward_stand_still,
@@ -636,7 +790,7 @@ class RPOFlatEnv(RPOBaseEnv):
             num_envs=self._num_envs,
             default_angles=self.default_angles,
             tracking_sigma=float(cfg.tracking_sigma),
-            base_height_target=0.0,
+            base_height_target=float(cfg.base_height_target),
             base_height=base_height,
             gravity=projected_gravity,
             dof_vel=dof_vel,
@@ -723,6 +877,29 @@ class RPOFlatEnv(RPOBaseEnv):
             self._reward_cfg.feet_air_time_command_threshold
         )
         return np.asarray(reward * moving * self._upright_gate(ctx.gravity), dtype=get_global_dtype())
+
+    def _reward_feet_phase(self, ctx: RewardContext) -> np.ndarray:
+        gait_phase = np.asarray(
+            ctx.info.get("gait_phase", np.zeros((ctx.num_envs, 2), dtype=get_global_dtype())),
+            dtype=get_global_dtype(),
+        )
+        foot_height = self._get_foot_height_from_probes()
+        left_target, right_target = compute_feet_phase_height_targets(
+            gait_phase, float(self._reward_cfg.feet_phase_swing_height)
+        )
+        left_error = np.square(foot_height[:, 0] - left_target)
+        right_error = np.square(foot_height[:, 1] - right_target)
+        reward = np.exp(
+            -(left_error + right_error) / float(max(self._reward_cfg.feet_phase_tracking_sigma, 1.0e-6))
+        )
+        return np.asarray(
+            reward
+            * compute_forward_speed_gate(
+                ctx.linvel, float(self._reward_cfg.min_forward_speed_for_gait_reward)
+            )
+            * self._upright_gate(ctx.gravity),
+            dtype=get_global_dtype(),
+        )
 
     def _reward_feet_height(self, ctx: RewardContext) -> np.ndarray:
         contacts = np.asarray(self._last_foot_contact, dtype=bool)
@@ -850,6 +1027,16 @@ class RPOFlatEnv(RPOBaseEnv):
     ) -> np.ndarray:
         num_envs = actor_obs_clean.shape[0]
         del info, dof_pos, dof_vel, num_envs
+        if self._use_g1_like_profile:
+            return np.concatenate(
+                [
+                    actor_obs_clean,
+                    np.asarray(linvel * 2.0, dtype=get_global_dtype()),
+                ],
+                axis=1,
+                dtype=get_global_dtype(),
+            )
+
         feet_height = np.clip(
             self._get_foot_height_from_probes(foot_probe_pos),
             0.0,
@@ -876,6 +1063,23 @@ class RPOFlatEnv(RPOBaseEnv):
         if prev_dof_vel is None:
             return np.zeros_like(dof_vel)
         return np.asarray((dof_vel - prev_dof_vel) / float(self._cfg.ctrl_dt), dtype=get_global_dtype())
+
+    def _uses_g1_like_profile(self) -> bool:
+        scales = getattr(self._reward_cfg, "scales", None)
+        if scales is not None and any(
+            key in scales
+            for key in (
+                "tracking_lin_vel",
+                "tracking_ang_vel",
+                "penalty_orientation",
+                "penalty_ang_vel_xy",
+                "penalty_action_rate",
+                "feet_phase",
+                "penalty_feet_ori",
+            )
+        ):
+            return True
+        return bool(getattr(getattr(self._cfg, "curriculum", None), "enabled", False))
 
     def _push_histories(
         self,
