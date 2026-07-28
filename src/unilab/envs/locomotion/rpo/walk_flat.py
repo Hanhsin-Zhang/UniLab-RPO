@@ -26,6 +26,7 @@ from unilab.envs.locomotion.common.domain_rand import DomainRandConfig
 from unilab.envs.locomotion.common.dr_provider import LocomotionDRProvider
 from unilab.envs.locomotion.common.rewards import RewardContext
 from unilab.envs.locomotion.rpo.base import RPOBaseCfg, RPOBaseEnv
+from unilab.utils.rotation import np_quat_apply_inverse
 
 
 @dataclass
@@ -134,6 +135,11 @@ class RPOWalkRewardConfig:
     base_height_target: float
     min_base_height: float
     max_tilt_deg: float
+    undesired_contact_threshold: float = 1.0
+    feet_distance_min: float = 0.16
+    feet_distance_max: float = 0.5
+    knee_distance_min: float = 0.18
+    knee_distance_max: float = 0.35
     min_forward_speed_for_gait_reward: float = 0.0
     close_feet_threshold: float = 0.15
     pose_weights: list[float] = field(default_factory=lambda: [0.01] * 12 + [50.0] * 11)
@@ -238,6 +244,9 @@ class RPOWalkEnv(RPOBaseEnv):
         super().__init__(cfg, backend, num_envs)
         self._enable_reward_log = True
         self._reward_cfg = cfg.reward_config
+        dtype = get_global_dtype()
+        self._feet_pos_b = np.zeros((num_envs, 2, 3), dtype=dtype)
+        self._knee_pos_b = np.zeros((num_envs, 2, 3), dtype=dtype)
 
         self._gait_phase_delta = float(
             2.0 * math.pi * self._reward_cfg.gait_frequency * cfg.ctrl_dt
@@ -294,6 +303,9 @@ class RPOWalkEnv(RPOBaseEnv):
             "upper_body_pose": self._reward_upper_body_pose,
             "penalty_close_feet_xy": self._reward_close_feet_xy,
             "penalty_feet_ori": self._reward_feet_ori,
+            "feet_distance": self._reward_feet_distance,
+            "knee_distance": self._reward_knee_distance,
+            "undesired_contacts": self._reward_undesired_contacts,
             "feet_phase": self._reward_feet_phase,
             "feet_phase_contrast": self._reward_feet_phase_contrast,
             "feet_phase_contact": self._reward_feet_phase_contact,
@@ -311,6 +323,16 @@ class RPOWalkEnv(RPOBaseEnv):
         gravity = self._backend.get_sensor_data(self._cfg.sensor.upvector)
         dof_pos = self.get_dof_pos()
         dof_vel = self.get_dof_vel()
+        base_pos = np.asarray(self._backend.get_base_pos(), dtype=get_global_dtype())
+        base_quat = np.asarray(self._backend.get_base_quat(), dtype=get_global_dtype())
+        foot_pos = np.asarray(self.get_foot_pos(), dtype=get_global_dtype())
+        knee_pos = np.asarray(self.get_knee_pos(), dtype=get_global_dtype())
+        self._feet_pos_b = self._body_pos_b_from_world(
+            foot_pos, base_pos=base_pos, base_quat=base_quat
+        )
+        self._knee_pos_b = self._body_pos_b_from_world(
+            knee_pos, base_pos=base_pos, base_quat=base_quat
+        )
 
         max_tilt_rad = np.deg2rad(self._reward_cfg.max_tilt_deg)
         tilt = np.arccos(np.clip(gravity[:, 2], -1, 1))
@@ -564,6 +586,65 @@ class RPOWalkEnv(RPOBaseEnv):
         return np.asarray(
             np.sum(self._upper_body_pose_weights * np.square(diff), axis=1),
             dtype=get_global_dtype(),
+        )
+
+    def _body_pos_b_from_world(
+        self,
+        body_pos_w: np.ndarray,
+        *,
+        base_pos: np.ndarray,
+        base_quat: np.ndarray,
+    ) -> np.ndarray:
+        rel = body_pos_w - base_pos[:, None, :]
+        flat_rel = rel.reshape(-1, 3)
+        q_rep = np.repeat(base_quat, rel.shape[1], axis=0)
+        flat_b = np_quat_apply_inverse(q_rep, flat_rel)
+        return np.asarray(flat_b.reshape(rel.shape), dtype=get_global_dtype())
+
+    def _body_distance_y_exp(self, pos_b: np.ndarray, *, min_dist: float, max_dist: float) -> np.ndarray:
+        distance = np.abs(pos_b[:, 0, 1] - pos_b[:, 1, 1])
+        d_min = np.clip(distance - float(min_dist), -0.5, 0.0)
+        d_max = np.clip(distance - float(max_dist), 0.0, 0.5)
+        return np.asarray(
+            (np.exp(-np.abs(d_min) * 100.0) + np.exp(-np.abs(d_max) * 100.0)) / 2.0,
+            dtype=get_global_dtype(),
+        )
+
+    def _reward_feet_distance(self, ctx: RewardContext):
+        del ctx
+        return self._body_distance_y_exp(
+            self._feet_pos_b,
+            min_dist=float(self._reward_cfg.feet_distance_min),
+            max_dist=float(self._reward_cfg.feet_distance_max),
+        )
+
+    def _reward_knee_distance(self, ctx: RewardContext):
+        del ctx
+        return self._body_distance_y_exp(
+            self._knee_pos_b,
+            min_dist=float(self._reward_cfg.knee_distance_min),
+            max_dist=float(self._reward_cfg.knee_distance_max),
+        )
+
+    def _contact_count_from_sensors(
+        self,
+        sensor_names: tuple[str, ...],
+        *,
+        threshold: float,
+    ) -> np.ndarray:
+        if not sensor_names:
+            return np.zeros((self._num_envs,), dtype=get_global_dtype())
+        forces = [np.asarray(self._backend.get_sensor_data(name), dtype=get_global_dtype()) for name in sensor_names]
+        stacked = np.stack(forces, axis=1)
+        exceeded = np.linalg.norm(stacked, axis=2) > float(threshold)
+        return np.asarray(np.sum(exceeded, axis=1), dtype=get_global_dtype())
+
+    def _reward_undesired_contacts(self, ctx: RewardContext):
+        del ctx
+        threshold = float(getattr(self._reward_cfg, "undesired_contact_threshold", 1.0))
+        return self._contact_count_from_sensors(
+            self._cfg.sensor.undesired_contact_force,
+            threshold=threshold,
         )
 
     def apply_action(self, actions: np.ndarray, state: NpEnvState) -> np.ndarray:

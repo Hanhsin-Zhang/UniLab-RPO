@@ -61,6 +61,23 @@
     <contact name="right_arm_roll_contact"    geom1="right_arm_roll_geom"    geom2="floor" data="force"/>
     <contact name="right_arm_yaw_contact"     geom1="right_arm_yaw_geom"     geom2="floor" data="force"/>
     <contact name="right_elbow_pitch_contact" geom1="right_elbow_pitch_geom" geom2="floor" data="force"/>
+
+    <contact name="thigh_pitch_self_contact"
+      geom1="left_thigh_pitch_geom"
+      geom2="right_thigh_pitch_geom"
+      data="force"/>
+    <contact name="knee_self_contact"
+      geom1="left_knee_geom"
+      geom2="right_knee_geom"
+      data="force"/>
+    <contact name="left_thigh_pitch_right_knee_self_contact"
+      geom1="left_thigh_pitch_geom"
+      geom2="right_knee_geom"
+      data="force"/>
+    <contact name="right_thigh_pitch_left_knee_self_contact"
+      geom1="right_thigh_pitch_geom"
+      geom2="left_knee_geom"
+      data="force"/>
   </sensor>
 
 

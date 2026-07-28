@@ -16,11 +16,11 @@
     <default class="visual">
       <geom type="mesh" density="0" contype="0" conaffinity="0" group="2"/>
     </default>
-      <default class="collision">
-        <geom type="capsule" rgba=".2 .6 .2 .35" contype="1" conaffinity="0" group="3"/>
+        <default class="collision">
+      <geom type="capsule" rgba=".2 .6 .2 .35" contype="1" conaffinity="1" group="3"/>
       <default class="foot_capsule">
         <!-- sole-contact capsule proxies -->
-        <geom type="capsule" size="0.010" rgba=".2 .7 .3 .3" friction="0.6" condim="3" group="3"/>
+        <geom type="capsule" size="0.010" rgba=".2 .7 .3 .3" friction="0.6" condim="3" contype="2" conaffinity="0" group="3"/>
       </default>
     </default>
     <default class="leg_position">
