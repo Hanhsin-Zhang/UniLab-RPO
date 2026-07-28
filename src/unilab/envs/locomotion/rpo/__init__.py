@@ -1,5 +1,6 @@
 from .base import Asset, ControlConfig, NoiseConfig, RPOBaseCfg, RPOBaseEnv, Sensor
 from .flat import RPOFlatCfg, RPOFlatEnv
+from .walk_flat import RPOWalkEnv, RPOWalkFlatCfg
 
 __all__ = [
     "Asset",
@@ -9,5 +10,7 @@ __all__ = [
     "RPOBaseEnv",
     "RPOFlatCfg",
     "RPOFlatEnv",
+    "RPOWalkFlatCfg",
+    "RPOWalkEnv",
     "Sensor",
 ]

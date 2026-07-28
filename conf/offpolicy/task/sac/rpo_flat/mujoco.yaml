@@ -1,78 +1,46 @@
 # @package _global_
 
 training:
-  task_name: RPOFlat
+  task_name: RPOWalkFlat
   sim_backend: mujoco
-  logger: tensorboard
-
-
 algo:
-  seed: 42
-  num_envs: 4096
-
-  learning_starts: 100
-  max_iterations: 6000
+  num_envs: 2048
+  learning_starts: 10
+  max_iterations: 5000
   save_interval: 1000
-  updates_per_step: 4
-  gamma: 0.98
-  tau: 0.0625
-  actor_lr: 2.0e-4
-  critic_lr: 2.0e-4
-  actor_hidden_dim: 256
-  critic_hidden_dim: 512
-  num_atoms: 101
-  obs_normalization: false
+  updates_per_step: 8
   use_symmetry: false
   algo_params:
-    alpha_lr: 3.0e-4
     alpha_init: 0.001
     target_entropy_ratio: 0.0
-    max_grad_norm: 0.8
 
 reward:
   scales:
     tracking_lin_vel: 2.0
     tracking_ang_vel: 1.5
-    alive: 2.0
-    upward: 1.0
-    penalty_ang_vel_xy: -2.0
+    penalty_ang_vel_xy: -1.0
     penalty_orientation: -10.0
-    penalty_action_rate: -2.0
-    penalty_feet_ori: -5.0
-    feet_phase: 4.0
+    penalty_action_rate: -4.0
+    pose: -0.5
+    penalty_feet_ori: -20.0
+    feet_phase: 5.0
+    alive: 10.0
   tracking_sigma: 0.25
-  base_height_target: 0.75
+  base_height_target: 0.78
   min_base_height: 0.4
-  max_tilt_deg: 40.0
+  max_tilt_deg: 65.0
   gait_frequency: 1.5
   feet_phase_swing_height: 0.09
-  feet_phase_tracking_sigma: 0.02
+  feet_phase_tracking_sigma: 0.04
   min_forward_speed_for_gait_reward: 0.0
-  undesired_contact_threshold: 1.0
-  feet_air_time_threshold: 0.4
-  feet_air_time_command_threshold: 0.01
-  feet_height_threshold: 0.02
-  feet_height_command_threshold: 0.01
-  feet_height_probe_reduction: min
-  feet_distance_min: 0.16
-  feet_distance_max: 0.50
-  knee_distance_min: 0.18
-  knee_distance_max: 0.35
-  stand_still_command_threshold: 0.01
-  stand_still_body_vel_threshold: 0.5
-  stand_still_pos_weight: 1.0
-  stand_still_vel_weight: 0.04
+  close_feet_threshold: 0.15
+  pose_weights: [5.0, 1.0, 0.01, 0.01, 5.0, 5.0, 5.0, 1.0, 0.01, 0.01, 5.0, 5.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0]
 
 env:
-  sim_dt: 0.0025
-  ctrl_dt: 0.02
-  # SAC stage0: disable standing-command mixture to avoid learning a trivial
-  # "hold default pose then fall" solution.
-  rel_standing_envs: 0.0
-  command_resample_interval: 10.0
+  control_config:
+    action_scale: 1.0
   gait_phase_init_mode: "offset_phase"
-  actor_obs_history_length: 3
-  critic_obs_history_length: 3
+  reset_base_qvel_limit: 0.5
   curriculum:
     enabled: true
     initial_scale: 0.5
@@ -81,41 +49,11 @@ env:
     level_down_threshold: 150.0
     level_up_threshold: 750.0
     degree: 0.001
-  control_config:
-    action_scale: 0.5
   noise_config:
     level: 1.0
     scale_joint_angle: 0.00
-    scale_joint_vel: 0.0
+    scale_joint_vel: 0.1
     scale_gyro: 0.00
     scale_gravity: 0.00
     scale_linvel: 0.0
-
-  domain_rand:
-    # 这一块基本延续 PPO owner，优先保持训练分布一致。
-    randomize_base_mass: false
-    added_mass_range: [-3.0, 3.0]
-    randomize_body_mass: false
-    body_mass_multiplier_range: [0.9, 1.1]
-    random_com: false
-    com_offset_x: [-0.025, 0.025]
-    com_offset_y: [-0.025, 0.025]
-    com_offset_z: [-0.05, 0.05]
-    randomize_ground_friction: false
-    ground_friction_multiplier_range: [0.3, 1.6]
-    randomize_dof_armature: false
-    dof_armature_multiplier_range: [0.5, 1.5]
-    randomize_kp: false
-    kp_multiplier_range: [0.9, 1.1]
-    randomize_kd: false
-    kd_multiplier_range: [0.9, 1.1]
-    push_robots: false
-    push_interval: 625
-    max_force: [1.0, 1.0, 0.5]
-    push_body_name: base_link
-    randomize_reset_joint_qpos: true
-    reset_joint_qpos_range: [-0.1, 0.1]
-    randomize_reset_base_qvel: false
-    reset_base_qvel_range:
-      - [-0.5, -0.5, -0.2, -0.52, -0.52, -0.78]
-      - [0.5, 0.5, 0.2, 0.52, 0.52, 0.78]
+    seed: null

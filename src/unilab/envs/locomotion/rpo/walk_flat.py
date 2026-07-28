@@ -1,4 +1,4 @@
-"""G1 joystick locomotion environments."""
+"""RPO flat walking environment with the validated G1-style SAC profile."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
-from etils import epath
 
 from unilab.assets import ASSETS_ROOT_PATH
 from unilab.base import registry
@@ -26,11 +25,11 @@ from unilab.envs.locomotion.common.commands import (
 from unilab.envs.locomotion.common.domain_rand import DomainRandConfig
 from unilab.envs.locomotion.common.dr_provider import LocomotionDRProvider
 from unilab.envs.locomotion.common.rewards import RewardContext
-from unilab.envs.locomotion.g1.base_rpo import G1RPOBaseCfg, G1RPOBaseEnv
+from unilab.envs.locomotion.rpo.base import RPOBaseCfg, RPOBaseEnv
 
 
 @dataclass
-class G1DomainRandConfig(DomainRandConfig):
+class RPOWalkDomainRandConfig(DomainRandConfig):
     randomize_kp: bool = True
     kp_multiplier_range: list[float] = field(default_factory=lambda: [0.9, 1.1])
 
@@ -57,10 +56,6 @@ def sample_gait_phase_pairs(rng, num_samples: int, mode: str) -> np.ndarray:
 
     phase = rng.uniform(0.0, 2.0 * np.pi, size=(num_samples,))
     return np.asarray(np.column_stack([phase, phase + np.pi]), dtype=get_global_dtype())
-
-
-def sample_reset_base_qvel(rng, num_samples: int, limit: float) -> np.ndarray:
-    return np.asarray(rng.uniform(-limit, limit, size=(num_samples, 6)), dtype=get_global_dtype())
 
 
 def build_upper_body_pose_weights(pose_weights: list[float]) -> np.ndarray:
@@ -130,7 +125,7 @@ def compute_forward_command_mask(commands: np.ndarray) -> np.ndarray:
 
 
 @dataclass
-class G1RewardConfig:
+class RPOWalkRewardConfig:
     scales: dict[str, float]
     tracking_sigma: float
     gait_frequency: float
@@ -145,11 +140,6 @@ class G1RewardConfig:
 
 
 @dataclass
-class G1WalkLegacyRewardConfig(G1RewardConfig):
-    pass
-
-
-@dataclass
 class CurriculumConfig:
     enabled: bool = False
     initial_scale: float = 0.5
@@ -161,7 +151,7 @@ class CurriculumConfig:
 
 
 @dataclass
-class G1WalkEnvCfg(G1RPOBaseCfg):
+class RPOWalkEnvCfg(RPOBaseCfg):
     scene: SceneCfg = field(
         default_factory=lambda: SceneCfg(
             model_file=str(ASSETS_ROOT_PATH / "robots" / "rpo" / "scene_flat.xml")
@@ -170,16 +160,14 @@ class G1WalkEnvCfg(G1RPOBaseCfg):
     max_episode_seconds: float = 20.0
     init_state: InitState = field(default_factory=InitState)
     commands: Commands = field(default_factory=Commands)
-    reward_config: G1RewardConfig | None = None
-    domain_rand: G1DomainRandConfig = field(default_factory=G1DomainRandConfig)
+    reward_config: RPOWalkRewardConfig | None = None
+    domain_rand: RPOWalkDomainRandConfig = field(default_factory=RPOWalkDomainRandConfig)
     gait_phase_init_mode: str = "offset_phase"
     reset_base_qvel_limit: float = 0.5
     curriculum: CurriculumConfig = field(default_factory=CurriculumConfig)
-    numba_acceleration: bool = False
-    numba_num_threads: int | None = None
 
 
-class G1WalkDomainRandomizationProvider(LocomotionDRProvider):
+class RPOWalkDomainRandomizationProvider(LocomotionDRProvider):
     def __init__(self, *, base_kp: np.ndarray | None = None, base_kd: np.ndarray | None = None):
         self._base_kp = base_kp
         self._base_kd = base_kd
@@ -231,11 +219,11 @@ class G1WalkDomainRandomizationProvider(LocomotionDRProvider):
         return env._compute_obs(info_updates, linvel, gyro, gravity, dof_pos, dof_vel)  # type: ignore[no-any-return]
 
 
-class G1WalkEnv(G1RPOBaseEnv):
-    _cfg: G1WalkEnvCfg
+class RPOWalkEnv(RPOBaseEnv):
+    _cfg: RPOWalkEnvCfg
     _reward_cfg: Any
 
-    def __init__(self, cfg: G1WalkEnvCfg, num_envs=1, backend_type="mujoco"):
+    def __init__(self, cfg: RPOWalkEnvCfg, num_envs=1, backend_type="mujoco"):
         if cfg.reward_config is None:
             raise ValueError("reward_config must be provided via Hydra configuration")
         backend = create_backend(
@@ -274,18 +262,11 @@ class G1WalkEnv(G1RPOBaseEnv):
             )
 
         self._init_reward_functions()
-        self._numba_accelerator = None
-        if cfg.numba_acceleration:
-            from unilab.envs.locomotion.g1.joystick_numba import G1WalkNumbaAccelerator
-
-            self._numba_accelerator = G1WalkNumbaAccelerator.from_env(
-                self, num_threads=cfg.numba_num_threads
-            )
         if cfg.domain_rand.randomize_kp or cfg.domain_rand.randomize_kd:
             base_kp, base_kd = backend.get_actuator_gains()
-            dr_provider = G1WalkDomainRandomizationProvider(base_kp=base_kp, base_kd=base_kd)
+            dr_provider = RPOWalkDomainRandomizationProvider(base_kp=base_kp, base_kd=base_kd)
         else:
-            dr_provider = G1WalkDomainRandomizationProvider()
+            dr_provider = RPOWalkDomainRandomizationProvider()
         self._init_domain_randomization(dr_provider)
 
     @property
@@ -331,32 +312,14 @@ class G1WalkEnv(G1RPOBaseEnv):
         dof_pos = self.get_dof_pos()
         dof_vel = self.get_dof_vel()
 
-        if self._numba_accelerator is not None:
-            accel_result = self._numba_accelerator.compute_update_state(
-                env=self,
-                info=state.info,
-                linvel=linvel,
-                gyro=gyro,
-                gravity=gravity,
-                dof_pos=dof_pos,
-                dof_vel=dof_vel,
-                scales=self._reward_cfg.scales,
-                enable_log=self._enable_reward_log,
-                noise_level=self._cfg.noise_config.level,
-            )
-            terminated = accel_result.terminated
-            reward = accel_result.reward
-            obs = accel_result.obs
-            state.info["log"] = accel_result.log
-        else:
-            max_tilt_rad = np.deg2rad(self._reward_cfg.max_tilt_deg)
-            tilt = np.arccos(np.clip(gravity[:, 2], -1, 1))
-            terminated = np.logical_or(
-                tilt > max_tilt_rad,
-                self._terrain_relative_base_height() < self._reward_cfg.min_base_height,
-            )
-            reward = self._compute_reward(state.info, linvel, gyro, gravity, dof_pos, dof_vel)
-            obs = self._compute_obs(state.info, linvel, gyro, gravity, dof_pos, dof_vel)
+        max_tilt_rad = np.deg2rad(self._reward_cfg.max_tilt_deg)
+        tilt = np.arccos(np.clip(gravity[:, 2], -1, 1))
+        terminated = np.logical_or(
+            tilt > max_tilt_rad,
+            self._terrain_relative_base_height() < self._reward_cfg.min_base_height,
+        )
+        reward = self._compute_reward(state.info, linvel, gyro, gravity, dof_pos, dof_vel)
+        obs = self._compute_obs(state.info, linvel, gyro, gravity, dof_pos, dof_vel)
 
         state = state.replace(obs=obs, reward=reward, terminated=terminated)
 
@@ -631,27 +594,27 @@ def _walk_curriculum() -> CurriculumConfig:
 
 
 @dataclass
-class G1WalkControlConfig:
+class RPOWalkControlConfig:
     action_scale: float = 1.0
     simulate_action_latency: bool = False
 
 
 @dataclass
-class G1WalkRewardConfig(G1RewardConfig):
-    """Align reward weights with holosoma G1 walking."""
+class RPOWalkProfileRewardConfig(RPOWalkRewardConfig):
+    """Reward profile validated for the RPO SAC walking migration."""
 
 
-@registry.envcfg("G1WalkFlatRpo")
+@registry.envcfg("RPOWalkFlat")
 @dataclass
-class G1WalkFlatRpoCfg(G1WalkEnvCfg):
-    reward_config: G1WalkRewardConfig | None = None
+class RPOWalkFlatCfg(RPOWalkEnvCfg):
+    reward_config: RPOWalkProfileRewardConfig | None = None
     scene: SceneCfg = field(
         default_factory=lambda: SceneCfg(
             model_file=str(ASSETS_ROOT_PATH / "robots" / "rpo" / "scene_flat.xml")
         )
     )
-    control_config: G1WalkControlConfig = field(default_factory=G1WalkControlConfig)  # type: ignore[assignment]
+    control_config: RPOWalkControlConfig = field(default_factory=RPOWalkControlConfig)  # type: ignore[assignment]
     curriculum: CurriculumConfig = field(default_factory=_walk_curriculum)
 
 
-registry.register_env("G1WalkFlatRpo", G1WalkEnv, sim_backend="mujoco")
+registry.register_env("RPOWalkFlat", RPOWalkEnv, sim_backend="mujoco")
