@@ -26,7 +26,7 @@ from unilab.envs.locomotion.common.commands import (
 from unilab.envs.locomotion.common.domain_rand import DomainRandConfig
 from unilab.envs.locomotion.common.dr_provider import LocomotionDRProvider
 from unilab.envs.locomotion.common.rewards import RewardContext
-from unilab.envs.locomotion.g1.base import G1BaseCfg, G1BaseEnv
+from unilab.envs.locomotion.g1.base_rpo import G1RPOBaseCfg, G1RPOBaseEnv
 
 
 @dataclass
@@ -40,7 +40,7 @@ class G1DomainRandConfig(DomainRandConfig):
 
 @dataclass
 class InitState:
-    pos = [0.0, 0.0, 0.754]
+    pos = [0.0, 0.0, 0.78]
 
 
 def sample_gait_phase_pairs(rng, num_samples: int, mode: str) -> np.ndarray:
@@ -94,8 +94,8 @@ def compute_feet_phase_height_targets(
     return left_target, right_target
 
 
-LEFT_FOOT_CONTACT_SENSORS = [f"left_foot_contact_{i}" for i in range(4)]
-RIGHT_FOOT_CONTACT_SENSORS = [f"right_foot_contact_{i}" for i in range(4)]
+LEFT_FOOT_CONTACT_SENSORS = [f"left_foot_contact_{i}" for i in range(5)]
+RIGHT_FOOT_CONTACT_SENSORS = [f"right_foot_contact_{i}" for i in range(5)]
 
 
 def _scalarize_sensor_values(sensor_values: np.ndarray) -> np.ndarray:
@@ -141,39 +141,7 @@ class G1RewardConfig:
     max_tilt_deg: float
     min_forward_speed_for_gait_reward: float = 0.0
     close_feet_threshold: float = 0.15
-    pose_weights: list[float] = field(
-        default_factory=lambda: [
-            0.01,
-            1.0,
-            5.0,
-            0.01,
-            5.0,
-            5.0,
-            0.01,
-            1.0,
-            5.0,
-            0.01,
-            5.0,
-            5.0,
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-            50.0,
-        ]
-    )
+    pose_weights: list[float] = field(default_factory=lambda: [0.01] * 12 + [50.0] * 11)
 
 
 @dataclass
@@ -193,10 +161,10 @@ class CurriculumConfig:
 
 
 @dataclass
-class G1WalkEnvCfg(G1BaseCfg):
+class G1WalkEnvCfg(G1RPOBaseCfg):
     scene: SceneCfg = field(
         default_factory=lambda: SceneCfg(
-            model_file=str(ASSETS_ROOT_PATH / "robots" / "g1" / "scene_flat.xml")
+            model_file=str(ASSETS_ROOT_PATH / "robots" / "rpo" / "scene_flat.xml")
         )
     )
     max_episode_seconds: float = 20.0
@@ -263,7 +231,7 @@ class G1WalkDomainRandomizationProvider(LocomotionDRProvider):
         return env._compute_obs(info_updates, linvel, gyro, gravity, dof_pos, dof_vel)  # type: ignore[no-any-return]
 
 
-class G1WalkEnv(G1BaseEnv):
+class G1WalkEnv(G1RPOBaseEnv):
     _cfg: G1WalkEnvCfg
     _reward_cfg: Any
 
@@ -322,8 +290,10 @@ class G1WalkEnv(G1BaseEnv):
 
     @property
     def obs_groups_spec(self) -> dict[str, int]:
-        # gyro(3) + gravity(3) + diff(29) + dof_vel(29) + action(29) + cmd(3) + phase(2) = 98
-        return {"obs": 98, "critic": 101}
+        nu = int(self._num_action)
+        actor_dim = 3 + 3 + nu + nu + nu + 3 + 2
+        critic_dim = actor_dim + 3
+        return {"obs": actor_dim, "critic": critic_dim}
 
     def _init_reward_functions(self):
         self._reward_fns: dict[str, Any] = {
@@ -509,15 +479,7 @@ class G1WalkEnv(G1BaseEnv):
         }
 
     def build_symmetry_augmentation(self, *, device: str):
-        if self._backend.backend_type != "mujoco":
-            return None
-        from unilab.envs.locomotion.g1.symmetry import G1SymmetryAugmentation
-
-        return G1SymmetryAugmentation(
-            self._backend.model,
-            self.get_symmetry_obs_layouts(),
-            device=device,
-        )
+        return None
 
     def _build_reward_context(
         self, info: dict, linvel, gyro, gravity, dof_pos, dof_vel
@@ -679,30 +641,17 @@ class G1WalkRewardConfig(G1RewardConfig):
     """Align reward weights with holosoma G1 walking."""
 
 
-@registry.envcfg("G1WalkFlat")
+@registry.envcfg("G1WalkFlatRpo")
 @dataclass
-class G1WalkFlatCfg(G1WalkEnvCfg):
+class G1WalkFlatRpoCfg(G1WalkEnvCfg):
     reward_config: G1WalkRewardConfig | None = None
     scene: SceneCfg = field(
         default_factory=lambda: SceneCfg(
-            model_file=str(ASSETS_ROOT_PATH / "robots" / "g1" / "scene_flat.xml")
+            model_file=str(ASSETS_ROOT_PATH / "robots" / "rpo" / "scene_flat.xml")
         )
     )
     control_config: G1WalkControlConfig = field(default_factory=G1WalkControlConfig)  # type: ignore[assignment]
     curriculum: CurriculumConfig = field(default_factory=_walk_curriculum)
 
 
-@registry.envcfg("G1WalkRough")
-@dataclass
-class G1WalkRoughCfg(G1WalkFlatCfg):
-    scene: SceneCfg = field(
-        default_factory=lambda: SceneCfg(
-            model_file=str(ASSETS_ROOT_PATH / "robots" / "g1" / "scene_rough.xml")
-        )
-    )
-
-
-registry.register_env("G1WalkFlat", G1WalkEnv, sim_backend="mujoco")
-registry.register_env("G1WalkFlat", G1WalkEnv, sim_backend="motrix")
-registry.register_env("G1WalkRough", G1WalkEnv, sim_backend="mujoco")
-registry.register_env("G1WalkRough", G1WalkEnv, sim_backend="motrix")
+registry.register_env("G1WalkFlatRpo", G1WalkEnv, sim_backend="mujoco")

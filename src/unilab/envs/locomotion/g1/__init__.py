@@ -7,3 +7,5 @@ from .joystick import (
     G1WalkRewardConfig,
     G1WalkRoughCfg,
 )
+
+from .joystick_rpo import G1WalkFlatRpoCfg

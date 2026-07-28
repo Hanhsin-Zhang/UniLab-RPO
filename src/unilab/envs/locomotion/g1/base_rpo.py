@@ -29,20 +29,20 @@ class ControlConfig(ControlConfigBase):
 
 @dataclass
 class Sensor(LocomotionSensor):
-    local_linvel: str = "pelvis_local_linvel"
-    gyro: str = "torso_gyro"
-    upvector: str = "torso_upvector"
+    local_linvel: str = "linear-velocity"
+    gyro: str = "angular-velocity"
+    upvector: str = "upvector"
 
 
 @dataclass
 class Asset:
-    base_name = "pelvis"
+    base_name = "base_link"
     foot_name = "ankle_roll_link"
     ground = "floor"
 
 
 @dataclass
-class G1BaseCfg(LocomotionBaseCfg):
+class G1RPOBaseCfg(LocomotionBaseCfg):
     noise_config: NoiseConfig = field(default_factory=NoiseConfig)  # type: ignore[assignment]
     control_config: ControlConfig = field(default_factory=ControlConfig)  # type: ignore[assignment]
     sensor: Sensor = field(default_factory=Sensor)
@@ -51,11 +51,6 @@ class G1BaseCfg(LocomotionBaseCfg):
     ctrl_dt: float = 0.02
 
 
-class G1BaseEnv(LocomotionBaseEnv):
-    _cfg: G1BaseCfg
+class G1RPOBaseEnv(LocomotionBaseEnv):
+    _cfg: G1RPOBaseCfg
     _keyframe_name = "stand"
-    _use_global_dtype = False
-
-    def _obs_noise(self, data: np.ndarray, scale: float) -> np.ndarray:
-        """Same as base, but coerces back to ``data.dtype`` (G1 runs in float32)."""
-        return np.asarray(super()._obs_noise(data, scale), dtype=data.dtype)
