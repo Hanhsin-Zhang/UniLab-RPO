@@ -313,10 +313,7 @@ class RPOWalkDomainRandomizationProvider(LocomotionDRProvider):
         dof_pos = env.get_dof_pos()[env_ids]
         current_obs = env._compute_obs(info_updates, linvel, gyro, gravity, dof_pos, dof_vel)
         env._fill_histories(env_ids, current_obs["obs"], current_obs["critic"])
-        return {
-            "obs": env._actor_hist[env_ids].reshape(len(env_ids), -1),
-            "critic": env._critic_hist[env_ids].reshape(len(env_ids), -1),
-        }
+        return env._snapshot_histories(env_ids)
 
     def build_reset_plan(self, env: Any, env_ids: np.ndarray) -> ResetPlan:
         plan = super().build_reset_plan(env, env_ids)
@@ -520,10 +517,7 @@ class RPOWalkEnv(RPOBaseEnv):
         reward = self._compute_reward(state.info, linvel, gyro, gravity, dof_pos, dof_vel)
         current_obs = self._compute_obs(state.info, linvel, gyro, gravity, dof_pos, dof_vel)
         self._push_histories(None, current_obs["obs"], current_obs["critic"])
-        obs = {
-            "obs": self._actor_hist.reshape(self._num_envs, -1),
-            "critic": self._critic_hist.reshape(self._num_envs, -1),
-        }
+        obs = self._snapshot_histories()
 
         state = state.replace(obs=obs, reward=reward, terminated=terminated)
 
@@ -895,6 +889,20 @@ class RPOWalkEnv(RPOBaseEnv):
     ) -> None:
         self._actor_hist[env_ids, :] = actor_obs[:, None, :]
         self._critic_hist[env_ids, :] = critic_obs[:, None, :]
+
+    def _snapshot_histories(
+        self,
+        env_ids: np.ndarray | None = None,
+    ) -> dict[str, np.ndarray]:
+        sel = slice(None) if env_ids is None else env_ids
+        # reshape(len(...), -1) flattens (batch, history, dim) -> (batch, history * dim).
+        # copy() is required here because off-policy workers keep previous obs across
+        # env.step() calls; returning a view into the mutable history buffers would let
+        # later steps overwrite earlier replay transitions in-place.
+        return {
+            "obs": self._actor_hist[sel].reshape(len(self._actor_hist[sel]), -1).copy(),
+            "critic": self._critic_hist[sel].reshape(len(self._critic_hist[sel]), -1).copy(),
+        }
 
     def _get_foot_height_from_probes(self) -> np.ndarray:
         probe_pos = self.get_foot_probe_pos()
