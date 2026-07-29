@@ -110,7 +110,7 @@ class RPOSymmetryAugmentation(SymmetryAugmentation):
             elif key == "gravity":
                 self._require_dim(key, dim, 3)
                 flip_mask[idx + 1] = -1.0
-            elif key in {"dof_pos", "dof_vel", "actions"}:
+            elif key in {"dof_pos", "dof_vel", "actions", "joint_acc", "joint_torque"}:
                 self._require_dim(key, dim, int(self._joint_map.numel()))
                 joint_map[idx : idx + dim] = self._joint_map + idx
                 joint_sign[idx : idx + dim] = self._sign_mask
@@ -119,6 +119,10 @@ class RPOSymmetryAugmentation(SymmetryAugmentation):
                 flip_mask[idx + 1] = -1.0
                 flip_mask[idx + 2] = -1.0
             elif key == "gait_phase":
+                self._require_dim(key, dim, 2)
+                joint_map[idx] = idx + 1
+                joint_map[idx + 1] = idx
+            elif key in {"feet_contact", "feet_air_time", "feet_contact_time", "feet_height"}:
                 self._require_dim(key, dim, 2)
                 joint_map[idx] = idx + 1
                 joint_map[idx + 1] = idx

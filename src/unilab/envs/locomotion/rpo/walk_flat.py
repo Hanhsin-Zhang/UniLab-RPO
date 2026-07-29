@@ -295,7 +295,16 @@ class RPOWalkDomainRandomizationProvider(LocomotionDRProvider):
         self, env: Any, env_ids: np.ndarray, info_updates: dict[str, Any]
     ) -> dict[str, np.ndarray]:
         env._current_feet_air_time[env_ids] = 0.0
+        env._current_feet_contact_time[env_ids] = 0.0
+        feet_contact = env._get_feet_contact()[env_ids]
+        dof_vel = env.get_dof_vel()[env_ids]
         info_updates["feet_air_time"] = env._current_feet_air_time[env_ids].copy()
+        info_updates["feet_contact_time"] = env._current_feet_contact_time[env_ids].copy()
+        info_updates["feet_contact"] = feet_contact.copy()
+        info_updates["feet_height"] = env._get_foot_height_from_probes()[env_ids].copy()
+        info_updates["torques"] = env._get_joint_torque()[env_ids].copy()
+        info_updates["qacc"] = np.zeros((len(env_ids), env._num_action), dtype=get_global_dtype())
+        info_updates["prev_dof_vel"] = dof_vel.copy()
         return super().build_reset_observation(env, env_ids, info_updates)
 
     def build_reset_plan(self, env: Any, env_ids: np.ndarray) -> ResetPlan:
@@ -366,6 +375,7 @@ class RPOWalkEnv(RPOBaseEnv):
         self._feet_pos_b = np.zeros((num_envs, 2, 3), dtype=dtype)
         self._knee_pos_b = np.zeros((num_envs, 2, 3), dtype=dtype)
         self._current_feet_air_time = np.zeros((num_envs, 2), dtype=dtype)
+        self._current_feet_contact_time = np.zeros((num_envs, 2), dtype=dtype)
         joint_range = self._backend.get_joint_range()
         self._joint_range = (
             np.asarray(joint_range, dtype=dtype) if joint_range is not None else None
@@ -413,7 +423,7 @@ class RPOWalkEnv(RPOBaseEnv):
     def obs_groups_spec(self) -> dict[str, int]:
         nu = int(self._num_action)
         actor_dim = 3 + 3 + nu + nu + nu + 3 + 2
-        critic_dim = actor_dim + 3
+        critic_dim = actor_dim + 3 + 2 + 2 + 2 + 2 + nu + nu
         return {"obs": actor_dim, "critic": critic_dim}
 
     def _init_reward_functions(self):
@@ -455,6 +465,13 @@ class RPOWalkEnv(RPOBaseEnv):
         gravity = self._backend.get_sensor_data(self._cfg.sensor.upvector)
         dof_pos = self.get_dof_pos()
         dof_vel = self.get_dof_vel()
+        feet_contact = self._get_feet_contact()
+        self._update_feet_timing(feet_contact)
+        joint_torque = self._get_joint_torque()
+        prev_dof_vel = state.info.get("prev_dof_vel")
+        if prev_dof_vel is None or not isinstance(prev_dof_vel, np.ndarray) or prev_dof_vel.shape != dof_vel.shape:
+            prev_dof_vel = None
+        joint_acc = self._compute_joint_acc(dof_vel, prev_dof_vel)
         base_pos = np.asarray(self._backend.get_base_pos(), dtype=get_global_dtype())
         base_quat = np.asarray(self._backend.get_base_quat(), dtype=get_global_dtype())
         foot_pos = np.asarray(self.get_foot_pos(), dtype=get_global_dtype())
@@ -465,8 +482,13 @@ class RPOWalkEnv(RPOBaseEnv):
         self._knee_pos_b = self._body_pos_b_from_world(
             knee_pos, base_pos=base_pos, base_quat=base_quat
         )
-        self._update_feet_air_time()
+        state.info["feet_height"] = self._get_foot_height_from_probes()
         state.info["feet_air_time"] = self._current_feet_air_time.copy()
+        state.info["feet_contact_time"] = self._current_feet_contact_time.copy()
+        state.info["feet_contact"] = feet_contact.copy()
+        state.info["torques"] = joint_torque.copy()
+        state.info["qacc"] = joint_acc.copy()
+        state.info["prev_dof_vel"] = dof_vel.copy()
 
         max_tilt_rad = np.deg2rad(self._reward_cfg.max_tilt_deg)
         tilt = np.arccos(np.clip(gravity[:, 2], -1, 1))
@@ -530,11 +552,36 @@ class RPOWalkEnv(RPOBaseEnv):
     def _compute_obs(
         self, info: dict, linvel, gyro, gravity, dof_pos, dof_vel
     ) -> dict[str, np.ndarray]:
+        batch_size = dof_pos.shape[0]
         noise_cfg = self._cfg.noise_config
         diff = dof_pos - self.default_angles
         command = info["commands"]
         last_actions = info.get("current_actions", np.zeros_like(diff))
-        gait_phase = info.get("gait_phase", np.zeros((self._num_envs, 2), dtype=get_global_dtype()))
+        gait_phase = info.get("gait_phase", np.zeros((batch_size, 2), dtype=get_global_dtype()))
+        feet_contact = np.asarray(
+            info.get("feet_contact", np.zeros((batch_size, 2), dtype=get_global_dtype())),
+            dtype=get_global_dtype(),
+        )
+        feet_air_time = np.asarray(
+            info.get("feet_air_time", np.zeros((batch_size, 2), dtype=get_global_dtype())),
+            dtype=get_global_dtype(),
+        )
+        feet_contact_time = np.asarray(
+            info.get("feet_contact_time", np.zeros((batch_size, 2), dtype=get_global_dtype())),
+            dtype=get_global_dtype(),
+        )
+        feet_height = np.asarray(
+            info.get("feet_height", np.zeros((batch_size, 2), dtype=get_global_dtype())),
+            dtype=get_global_dtype(),
+        )
+        joint_acc = np.asarray(
+            info.get("qacc", np.zeros_like(dof_vel)),
+            dtype=get_global_dtype(),
+        )
+        joint_torque = np.asarray(
+            info.get("torques", np.zeros_like(dof_vel)),
+            dtype=get_global_dtype(),
+        )
         walk_profile = self._uses_walk_observation_profile()
 
         noisy_gyro = self._obs_noise(gyro, noise_cfg.scale_gyro)
@@ -561,6 +608,10 @@ class RPOWalkEnv(RPOBaseEnv):
         critic_gyro_scale = 0.25 if walk_profile else 1.0
         critic_dof_vel_scale = 0.05 if walk_profile else 1.0
         critic_linvel_scale = 2.0 if walk_profile else 1.0
+        critic_time_scale = 5.0
+        critic_feet_height_scale = 20.0
+        critic_joint_acc_scale = 1.0 / 400.0
+        critic_joint_torque_scale = 1.0 / 40.0
         critic_base = np.concatenate(
             [
                 gyro * critic_gyro_scale,
@@ -578,6 +629,12 @@ class RPOWalkEnv(RPOBaseEnv):
             [
                 critic_base,
                 np.asarray(linvel * critic_linvel_scale, dtype=get_global_dtype()),
+                feet_contact,
+                feet_air_time * critic_time_scale,
+                feet_contact_time * critic_time_scale,
+                feet_height * critic_feet_height_scale,
+                joint_acc * critic_joint_acc_scale,
+                joint_torque * critic_joint_torque_scale,
             ],
             axis=1,
             dtype=get_global_dtype(),
@@ -623,7 +680,16 @@ class RPOWalkEnv(RPOBaseEnv):
         actor_layout = self._actor_symmetry_obs_layout()
         return {
             "obs": actor_layout,
-            "critic": (*actor_layout, ("linvel", 3)),
+            "critic": (
+                *actor_layout,
+                ("linvel", 3),
+                ("feet_contact", 2),
+                ("feet_air_time", 2),
+                ("feet_contact_time", 2),
+                ("feet_height", 2),
+                ("joint_acc", self._num_action),
+                ("joint_torque", self._num_action),
+            ),
         }
 
     def build_symmetry_augmentation(self, *, device: str):
@@ -763,12 +829,16 @@ class RPOWalkEnv(RPOBaseEnv):
             dtype=get_global_dtype(),
         )
 
-    def _update_feet_air_time(self) -> None:
+    def _get_feet_contact(self) -> np.ndarray:
         left_contact = compute_aggregated_foot_contact(self._backend, LEFT_FOOT_CONTACT_SENSORS)
         right_contact = compute_aggregated_foot_contact(self._backend, RIGHT_FOOT_CONTACT_SENSORS)
-        feet_contact = np.stack([left_contact, right_contact], axis=1)
+        return np.stack([left_contact, right_contact], axis=1)
+
+    def _update_feet_timing(self, feet_contact: np.ndarray) -> None:
         self._current_feet_air_time[~feet_contact] += float(self._cfg.ctrl_dt)
         self._current_feet_air_time[feet_contact] = 0.0
+        self._current_feet_contact_time[feet_contact] += float(self._cfg.ctrl_dt)
+        self._current_feet_contact_time[~feet_contact] = 0.0
 
     def _get_foot_height_from_probes(self) -> np.ndarray:
         probe_pos = self.get_foot_probe_pos()
@@ -782,6 +852,19 @@ class RPOWalkEnv(RPOBaseEnv):
             "reward.feet_height_probe_reduction must be either 'min' or 'mean', "
             f"got {self._reward_cfg.feet_height_probe_reduction!r}"
         )
+
+    def _get_joint_torque(self) -> np.ndarray:
+        return np.asarray(
+            self._backend.get_sensor_data_batch(self._cfg.sensor.actuator_frc),
+            dtype=get_global_dtype(),
+        )
+
+    def _compute_joint_acc(
+        self, dof_vel: np.ndarray, prev_dof_vel: np.ndarray | None
+    ) -> np.ndarray:
+        if prev_dof_vel is None:
+            return np.zeros_like(dof_vel)
+        return np.asarray((dof_vel - prev_dof_vel) / float(self._cfg.ctrl_dt), dtype=get_global_dtype())
 
     def _reward_feet_height(self, ctx: RewardContext):
         left_contact = compute_aggregated_foot_contact(self._backend, LEFT_FOOT_CONTACT_SENSORS)
