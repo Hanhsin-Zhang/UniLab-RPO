@@ -26,7 +26,8 @@ reward:
     feet_distance: 0.05
     knee_distance: 0.05
     undesired_contacts: -20.0
-    feet_phase: 5.0
+    feet_height: 0.5
+    feet_phase: 0.0
     alive: 2.0
   tracking_sigma: 0.25
   base_height_target: 0.78
@@ -40,15 +41,47 @@ reward:
   close_feet_threshold: 0.15
   feet_distance_min: 0.15
   feet_distance_max: 0.50
-  knee_distance_min: 0.16
+  knee_distance_min: 0.15
   knee_distance_max: 0.35
+  feet_height_threshold: 0.02
+  feet_height_command_threshold: 0.01
+  feet_height_probe_reduction: min
   pose_weights: [5.0, 1.0, 0.01, 0.01, 5.0, 5.0, 5.0, 1.0, 0.01, 0.01, 5.0, 5.0, 50.0, 5.0, 10.0, 50.0, 50.0, 50.0, 5.0, 10.0, 50.0, 50.0, 50.0]
 
 env:
+  commands:
+    rel_standing_envs: 0.2
   control_config:
     action_scale: 1.0
   gait_phase_init_mode: "offset_phase"
   reset_base_qvel_limit: 0.5
+  domain_rand:
+    randomize_base_mass: true
+    added_mass_range: [-3.0, 3.0]
+    randomize_body_mass: true
+    body_mass_multiplier_range: [0.9, 1.1]
+    random_com: true
+    com_offset_x: [-0.025, 0.025]
+    com_offset_y: [-0.025, 0.025]
+    com_offset_z: [-0.05, 0.05]
+    randomize_ground_friction: true
+    ground_friction_multiplier_range: [0.3, 1.6]
+    randomize_dof_armature: true
+    dof_armature_multiplier_range: [0.5, 1.5]
+    randomize_kp: true
+    kp_multiplier_range: [0.9, 1.1]
+    randomize_kd: true
+    kd_multiplier_range: [0.9, 1.1]
+    push_robots: true
+    push_interval: 250
+    max_force: [300.0, 300.0, 200.0]
+    push_body_name: base_link
+    randomize_reset_joint_qpos: true
+    reset_joint_qpos_range: [-0.1, 0.1]
+    randomize_reset_base_qvel: true
+    reset_base_qvel_range:
+      - [-0.5, -0.5, -0.2, -0.52, -0.52, -0.78]
+      - [0.5, 0.5, 0.2, 0.52, 0.52, 0.78]
   curriculum:
     enabled: true
     initial_scale: 0.5

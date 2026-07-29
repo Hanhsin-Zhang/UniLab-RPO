@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import math
 from dataclasses import dataclass, field
 from typing import Any
@@ -15,6 +16,7 @@ from unilab.base.backend import create_backend, env_backend_kwargs
 from unilab.base.curriculum import EpisodeLengthTracker, PenaltyCurriculum
 from unilab.base.np_env import NpEnvState
 from unilab.base.scene import SceneCfg
+from unilab.dr import ResetPlan
 from unilab.dtype_config import get_global_dtype
 from unilab.envs.locomotion.common import rewards
 from unilab.envs.locomotion.common.commands import (
@@ -31,11 +33,25 @@ from unilab.utils.rotation import np_quat_apply_inverse
 
 @dataclass
 class RPOWalkDomainRandConfig(DomainRandConfig):
+    com_offset_y: list[float] = field(default_factory=lambda: [-0.025, 0.025])
+    com_offset_z: list[float] = field(default_factory=lambda: [-0.05, 0.05])
+
     randomize_kp: bool = True
     kp_multiplier_range: list[float] = field(default_factory=lambda: [0.9, 1.1])
 
     randomize_kd: bool = True
     kd_multiplier_range: list[float] = field(default_factory=lambda: [0.9, 1.1])
+
+    randomize_reset_joint_qpos: bool = False
+    reset_joint_qpos_range: list[float] = field(default_factory=lambda: [-0.05, 0.05])
+
+    randomize_reset_base_qvel: bool = False
+    reset_base_qvel_range: list[list[float]] = field(
+        default_factory=lambda: [
+            [-0.5, -0.5, -0.2, -0.52, -0.52, -0.78],
+            [0.5, 0.5, 0.2, 0.52, 0.52, 0.78],
+        ]
+    )
 
 
 @dataclass
@@ -125,6 +141,23 @@ def compute_forward_command_mask(commands: np.ndarray) -> np.ndarray:
     return np.asarray(np.maximum(commands[:, 0], 0.0) > 1.0e-6, dtype=get_global_dtype())
 
 
+def _scale_symmetric_range(values: list[float], scale: float) -> list[float]:
+    arr = np.asarray(values, dtype=np.float64)
+    return np.asarray(arr * scale, dtype=np.float64).tolist()
+
+
+def _scale_multiplier_range(values: list[float], scale: float) -> list[float]:
+    arr = np.asarray(values, dtype=np.float64)
+    center = 1.0
+    return np.asarray(center + (arr - center) * scale, dtype=np.float64).tolist()
+
+
+def _scale_matrix_range(values: list[list[float]], scale: float) -> list[list[float]]:
+    arr = np.asarray(values, dtype=np.float64)
+    center = np.mean(arr, axis=0, keepdims=True)
+    return np.asarray(center + (arr - center) * scale, dtype=np.float64).tolist()
+
+
 @dataclass
 class RPOWalkRewardConfig:
     scales: dict[str, float]
@@ -142,6 +175,9 @@ class RPOWalkRewardConfig:
     knee_distance_max: float = 0.35
     min_forward_speed_for_gait_reward: float = 0.0
     close_feet_threshold: float = 0.15
+    feet_height_threshold: float = 0.02
+    feet_height_command_threshold: float = 0.01
+    feet_height_probe_reduction: str = "min"
     pose_weights: list[float] = field(default_factory=lambda: [0.01] * 12 + [50.0] * 11)
 
 
@@ -174,14 +210,45 @@ class RPOWalkEnvCfg(RPOBaseCfg):
 
 
 class RPOWalkDomainRandomizationProvider(LocomotionDRProvider):
-    def __init__(self, *, base_kp: np.ndarray | None = None, base_kd: np.ndarray | None = None):
+    def __init__(
+        self,
+        *,
+        base_kp: np.ndarray | None = None,
+        base_kd: np.ndarray | None = None,
+        base_body_mass: np.ndarray | None = None,
+        base_geom_friction: np.ndarray | None = None,
+        ground_geom_id: int | None = None,
+        base_dof_armature: np.ndarray | None = None,
+    ):
         self._base_kp = base_kp
         self._base_kd = base_kd
+        self._base_body_mass = base_body_mass
+        self._base_geom_friction = base_geom_friction
+        self._ground_geom_id = ground_geom_id
+        self._base_dof_armature = base_dof_armature
 
     def _get_base_actuator_gains(self, env: Any) -> tuple[np.ndarray | None, np.ndarray | None]:
         return self._base_kp, self._base_kd
 
+    def _get_reset_randomization_baselines(
+        self, env: Any
+    ) -> tuple[np.ndarray | None, np.ndarray | None, int | None, np.ndarray | None]:
+        return (
+            self._base_body_mass,
+            self._base_geom_friction,
+            self._ground_geom_id,
+            self._base_dof_armature,
+        )
+
     def _get_qvel_limit(self, env: Any) -> float:
+        if getattr(env.cfg.domain_rand, "randomize_reset_base_qvel", False):
+            qvel_range = np.asarray(env.cfg.domain_rand.reset_base_qvel_range, dtype=np.float64)
+            if qvel_range.shape != (2, 6):
+                raise ValueError(
+                    "domain_rand.reset_base_qvel_range must have shape (2, 6), "
+                    f"got {qvel_range.shape}"
+                )
+            return float(np.max(np.abs(qvel_range)))
         return float(env.cfg.reset_base_qvel_limit)
 
     def _build_extra_info_updates(self, env: Any, num_reset: int) -> dict[str, np.ndarray]:
@@ -224,6 +291,50 @@ class RPOWalkDomainRandomizationProvider(LocomotionDRProvider):
     ) -> dict[str, np.ndarray]:
         return env._compute_obs(info_updates, linvel, gyro, gravity, dof_pos, dof_vel)  # type: ignore[no-any-return]
 
+    def build_reset_plan(self, env: Any, env_ids: np.ndarray) -> ResetPlan:
+        plan = super().build_reset_plan(env, env_ids)
+        num_reset = len(env_ids)
+        qpos = np.asarray(plan.qpos, dtype=get_global_dtype()).copy()
+        qvel = np.asarray(plan.qvel, dtype=get_global_dtype()).copy()
+        info_updates = dict(plan.info_updates)
+        domain_rand = env.cfg.domain_rand
+
+        if getattr(domain_rand, "randomize_reset_base_qvel", False) and num_reset > 0:
+            qvel_range = np.asarray(domain_rand.reset_base_qvel_range, dtype=np.float64)
+            if qvel_range.shape != (2, 6):
+                raise ValueError(
+                    "domain_rand.reset_base_qvel_range must have shape (2, 6), "
+                    f"got {qvel_range.shape}"
+                )
+            low = np.minimum(qvel_range[0], qvel_range[1])
+            high = np.maximum(qvel_range[0], qvel_range[1])
+            qvel[:, 0:6] = np.asarray(
+                np.random.uniform(low=low, high=high, size=(num_reset, 6)),
+                dtype=qvel.dtype,
+            )
+
+        if getattr(domain_rand, "randomize_reset_joint_qpos", False) and num_reset > 0:
+            low, high = domain_rand.reset_joint_qpos_range
+            low_f = float(min(low, high))
+            high_f = float(max(low, high))
+            joint_qpos = qpos[:, -env._num_action :]
+            joint_qpos += np.asarray(
+                np.random.uniform(low_f, high_f, size=(num_reset, env._num_action)),
+                dtype=joint_qpos.dtype,
+            )
+            if env._joint_range is not None:
+                lower = env._joint_range[:, 0]
+                upper = env._joint_range[:, 1]
+                np.clip(joint_qpos, lower, upper, out=joint_qpos)
+
+        return ResetPlan(
+            env_ids=plan.env_ids,
+            qpos=qpos,
+            qvel=qvel,
+            info_updates=info_updates,
+            randomization=plan.randomization,
+        )
+
 
 class RPOWalkEnv(RPOBaseEnv):
     _cfg: RPOWalkEnvCfg
@@ -247,6 +358,10 @@ class RPOWalkEnv(RPOBaseEnv):
         dtype = get_global_dtype()
         self._feet_pos_b = np.zeros((num_envs, 2, 3), dtype=dtype)
         self._knee_pos_b = np.zeros((num_envs, 2, 3), dtype=dtype)
+        joint_range = self._backend.get_joint_range()
+        self._joint_range = (
+            np.asarray(joint_range, dtype=dtype) if joint_range is not None else None
+        )
 
         self._gait_phase_delta = float(
             2.0 * math.pi * self._reward_cfg.gait_frequency * cfg.ctrl_dt
@@ -269,13 +384,21 @@ class RPOWalkEnv(RPOBaseEnv):
                 level_up_threshold=cfg.curriculum.level_up_threshold,
                 degree=cfg.curriculum.degree,
             )
+        self._domain_rand_curriculum_base: RPOWalkDomainRandConfig | None = None
+        if cfg.curriculum.enabled:
+            self._domain_rand_curriculum_base = deepcopy(cfg.domain_rand)
+            self._apply_domain_rand_curriculum_scale(cfg.curriculum.initial_scale)
 
         self._init_reward_functions()
-        if cfg.domain_rand.randomize_kp or cfg.domain_rand.randomize_kd:
-            base_kp, base_kd = backend.get_actuator_gains()
-            dr_provider = RPOWalkDomainRandomizationProvider(base_kp=base_kp, base_kd=base_kd)
-        else:
-            dr_provider = RPOWalkDomainRandomizationProvider()
+        base_kp, base_kd = backend.get_actuator_gains()
+        dr_provider = RPOWalkDomainRandomizationProvider(
+            base_kp=np.asarray(base_kp, dtype=np.float64),
+            base_kd=np.asarray(base_kd, dtype=np.float64),
+            base_body_mass=np.asarray(backend.get_body_mass(), dtype=np.float64),
+            base_geom_friction=np.asarray(backend.get_geom_friction(), dtype=np.float64),
+            ground_geom_id=int(backend.get_geom_id(cfg.asset.ground)),
+            base_dof_armature=np.asarray(backend.get_dof_armature(), dtype=np.float64),
+        )
         self._init_domain_randomization(dr_provider)
 
     @property
@@ -311,6 +434,7 @@ class RPOWalkEnv(RPOBaseEnv):
             "feet_phase_contact": self._reward_feet_phase_contact,
             "feet_double_stance": self._reward_feet_double_stance,
             "feet_air_time": self._reward_feet_air_time,
+            "feet_height": self._reward_feet_height,
             "alive": rewards.alive,
         }
 
@@ -353,6 +477,7 @@ class RPOWalkEnv(RPOBaseEnv):
         episode_lengths = state.info["steps"][done_indices] + 1
         self._episode_tracker.update(episode_lengths)
         self._penalty_curriculum.update(self._episode_tracker.average_length)
+        self._apply_domain_rand_curriculum_scale(self._penalty_curriculum.current_scale)
 
         if "log" not in state.info:
             state.info["log"] = {}
@@ -362,7 +487,35 @@ class RPOWalkEnv(RPOBaseEnv):
         state.info["log"]["curriculum/penalty_scale"] = float(
             self._penalty_curriculum.current_scale
         )
+        state.info["log"]["curriculum/domain_rand_scale"] = float(
+            self._penalty_curriculum.current_scale
+        )
         return state
+
+    def _apply_domain_rand_curriculum_scale(self, scale: float) -> None:
+        base = self._domain_rand_curriculum_base
+        if base is None:
+            return
+        curr = self._cfg.domain_rand
+        curr.added_mass_range = _scale_symmetric_range(base.added_mass_range, scale)
+        curr.body_mass_multiplier_range = _scale_multiplier_range(
+            base.body_mass_multiplier_range, scale
+        )
+        curr.com_offset_x = _scale_symmetric_range(base.com_offset_x, scale)
+        curr.com_offset_y = _scale_symmetric_range(base.com_offset_y, scale)
+        curr.com_offset_z = _scale_symmetric_range(base.com_offset_z, scale)
+        curr.gravity_range = _scale_matrix_range(base.gravity_range, scale)
+        curr.ground_friction_multiplier_range = _scale_multiplier_range(
+            base.ground_friction_multiplier_range, scale
+        )
+        curr.dof_armature_multiplier_range = _scale_multiplier_range(
+            base.dof_armature_multiplier_range, scale
+        )
+        curr.kp_multiplier_range = _scale_multiplier_range(base.kp_multiplier_range, scale)
+        curr.kd_multiplier_range = _scale_multiplier_range(base.kd_multiplier_range, scale)
+        curr.max_force = _scale_symmetric_range(base.max_force, scale)
+        curr.reset_joint_qpos_range = _scale_symmetric_range(base.reset_joint_qpos_range, scale)
+        curr.reset_base_qvel_range = _scale_matrix_range(base.reset_base_qvel_range, scale)
 
     def _compute_obs(
         self, info: dict, linvel, gyro, gravity, dof_pos, dof_vel
@@ -588,6 +741,40 @@ class RPOWalkEnv(RPOBaseEnv):
         )
         in_range = (air_time > 0.05) & (air_time < 0.5)
         return np.sum(in_range.astype(float), axis=1)
+
+    def _get_foot_height_from_probes(self) -> np.ndarray:
+        probe_pos = self.get_foot_probe_pos()
+        probe_height = np.asarray(probe_pos[:, :, :, 2], dtype=get_global_dtype())
+        reduction = str(self._reward_cfg.feet_height_probe_reduction).strip().lower()
+        if reduction == "mean":
+            return np.asarray(np.mean(probe_height, axis=2), dtype=get_global_dtype())
+        if reduction == "min":
+            return np.asarray(np.min(probe_height, axis=2), dtype=get_global_dtype())
+        raise ValueError(
+            "reward.feet_height_probe_reduction must be either 'min' or 'mean', "
+            f"got {self._reward_cfg.feet_height_probe_reduction!r}"
+        )
+
+    def _reward_feet_height(self, ctx: RewardContext):
+        left_contact = compute_aggregated_foot_contact(self._backend, LEFT_FOOT_CONTACT_SENSORS)
+        right_contact = compute_aggregated_foot_contact(self._backend, RIGHT_FOOT_CONTACT_SENSORS)
+        contacts = np.stack([left_contact, right_contact], axis=1)
+        single_stance = np.sum(contacts.astype(np.int32), axis=1) == 1
+        foot_height = np.clip(self._get_foot_height_from_probes(), 0.0, 1.0)
+        threshold = float(self._reward_cfg.feet_height_threshold)
+        reward_per_foot = np.clip(foot_height / max(threshold, 1.0e-6), 0.0, 1.0).astype(
+            get_global_dtype()
+        )
+        reward = np.where((~contacts) & single_stance[:, None], reward_per_foot, 0.0).sum(axis=1)
+        commands = np.asarray(
+            ctx.info.get("commands", np.zeros((self._num_envs, 3), dtype=get_global_dtype())),
+            dtype=get_global_dtype(),
+        )
+        moving = (np.linalg.norm(commands[:, :2], axis=1) + np.abs(commands[:, 2])) > float(
+            self._reward_cfg.feet_height_command_threshold
+        )
+        upright = rewards.upright_scale(ctx.gravity, ctx.num_envs)
+        return np.asarray(reward * moving * upright, dtype=get_global_dtype())
 
     def _reward_upper_body_pose(self, ctx: RewardContext):
         diff = ctx.dof_pos - self.default_angles
