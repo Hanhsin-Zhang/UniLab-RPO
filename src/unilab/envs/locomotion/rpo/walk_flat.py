@@ -206,6 +206,8 @@ class RPOWalkEnvCfg(RPOBaseCfg):
     domain_rand: RPOWalkDomainRandConfig = field(default_factory=RPOWalkDomainRandConfig)
     gait_phase_init_mode: str = "offset_phase"
     reset_base_qvel_limit: float = 0.5
+    actor_obs_history_length: int = 1
+    critic_obs_history_length: int = 1
     curriculum: CurriculumConfig = field(default_factory=CurriculumConfig)
 
 
@@ -305,7 +307,16 @@ class RPOWalkDomainRandomizationProvider(LocomotionDRProvider):
         info_updates["torques"] = env._get_joint_torque()[env_ids].copy()
         info_updates["qacc"] = np.zeros((len(env_ids), env._num_action), dtype=get_global_dtype())
         info_updates["prev_dof_vel"] = dof_vel.copy()
-        return super().build_reset_observation(env, env_ids, info_updates)
+        linvel = env.get_local_linvel()[env_ids]
+        gyro = env.get_gyro()[env_ids]
+        gravity = env._backend.get_sensor_data(env._cfg.sensor.upvector)[env_ids]
+        dof_pos = env.get_dof_pos()[env_ids]
+        current_obs = env._compute_obs(info_updates, linvel, gyro, gravity, dof_pos, dof_vel)
+        env._fill_histories(env_ids, current_obs["obs"], current_obs["critic"])
+        return {
+            "obs": env._actor_hist[env_ids].reshape(len(env_ids), -1),
+            "critic": env._critic_hist[env_ids].reshape(len(env_ids), -1),
+        }
 
     def build_reset_plan(self, env: Any, env_ids: np.ndarray) -> ResetPlan:
         plan = super().build_reset_plan(env, env_ids)
@@ -372,6 +383,16 @@ class RPOWalkEnv(RPOBaseEnv):
         self._enable_reward_log = True
         self._reward_cfg = cfg.reward_config
         dtype = get_global_dtype()
+        self._actor_hist_len = max(1, int(cfg.actor_obs_history_length))
+        self._critic_hist_len = max(1, int(cfg.critic_obs_history_length))
+        self._actor_obs_dim = 3 + 3 + self._num_action + self._num_action + self._num_action + 3 + 2
+        self._critic_obs_dim = self._actor_obs_dim + 3 + 2 + 2 + 2 + 2 + self._num_action + self._num_action
+        self._actor_hist = np.zeros(
+            (num_envs, self._actor_hist_len, self._actor_obs_dim), dtype=dtype
+        )
+        self._critic_hist = np.zeros(
+            (num_envs, self._critic_hist_len, self._critic_obs_dim), dtype=dtype
+        )
         self._feet_pos_b = np.zeros((num_envs, 2, 3), dtype=dtype)
         self._knee_pos_b = np.zeros((num_envs, 2, 3), dtype=dtype)
         self._current_feet_air_time = np.zeros((num_envs, 2), dtype=dtype)
@@ -421,10 +442,10 @@ class RPOWalkEnv(RPOBaseEnv):
 
     @property
     def obs_groups_spec(self) -> dict[str, int]:
-        nu = int(self._num_action)
-        actor_dim = 3 + 3 + nu + nu + nu + 3 + 2
-        critic_dim = actor_dim + 3 + 2 + 2 + 2 + 2 + nu + nu
-        return {"obs": actor_dim, "critic": critic_dim}
+        return {
+            "obs": self._actor_obs_dim * self._actor_hist_len,
+            "critic": self._critic_obs_dim * self._critic_hist_len,
+        }
 
     def _init_reward_functions(self):
         self._reward_fns: dict[str, Any] = {
@@ -497,7 +518,12 @@ class RPOWalkEnv(RPOBaseEnv):
             self._terrain_relative_base_height() < self._reward_cfg.min_base_height,
         )
         reward = self._compute_reward(state.info, linvel, gyro, gravity, dof_pos, dof_vel)
-        obs = self._compute_obs(state.info, linvel, gyro, gravity, dof_pos, dof_vel)
+        current_obs = self._compute_obs(state.info, linvel, gyro, gravity, dof_pos, dof_vel)
+        self._push_histories(None, current_obs["obs"], current_obs["critic"])
+        obs = {
+            "obs": self._actor_hist.reshape(self._num_envs, -1),
+            "critic": self._critic_hist.reshape(self._num_envs, -1),
+        }
 
         state = state.replace(obs=obs, reward=reward, terminated=terminated)
 
@@ -676,19 +702,28 @@ class RPOWalkEnv(RPOBaseEnv):
             ("gait_phase", 2),
         )
 
+    @staticmethod
+    def _repeat_symmetry_obs_layout(
+        layout: SymmetryObsLayout, history_length: int
+    ) -> SymmetryObsLayout:
+        return tuple(entry for _ in range(max(1, int(history_length))) for entry in layout)
+
     def get_symmetry_obs_layouts(self) -> dict[str, SymmetryObsLayout]:
-        actor_layout = self._actor_symmetry_obs_layout()
+        actor_layout_single = self._actor_symmetry_obs_layout()
+        critic_layout_single = (
+            *actor_layout_single,
+            ("linvel", 3),
+            ("feet_contact", 2),
+            ("feet_air_time", 2),
+            ("feet_contact_time", 2),
+            ("feet_height", 2),
+            ("joint_acc", self._num_action),
+            ("joint_torque", self._num_action),
+        )
         return {
-            "obs": actor_layout,
-            "critic": (
-                *actor_layout,
-                ("linvel", 3),
-                ("feet_contact", 2),
-                ("feet_air_time", 2),
-                ("feet_contact_time", 2),
-                ("feet_height", 2),
-                ("joint_acc", self._num_action),
-                ("joint_torque", self._num_action),
+            "obs": self._repeat_symmetry_obs_layout(actor_layout_single, self._actor_hist_len),
+            "critic": self._repeat_symmetry_obs_layout(
+                critic_layout_single, self._critic_hist_len
             ),
         }
 
@@ -839,6 +874,27 @@ class RPOWalkEnv(RPOBaseEnv):
         self._current_feet_air_time[feet_contact] = 0.0
         self._current_feet_contact_time[feet_contact] += float(self._cfg.ctrl_dt)
         self._current_feet_contact_time[~feet_contact] = 0.0
+
+    def _push_histories(
+        self,
+        env_ids: np.ndarray | None,
+        actor_obs: np.ndarray,
+        critic_obs: np.ndarray,
+    ) -> None:
+        sel = slice(None) if env_ids is None else env_ids
+        self._actor_hist[sel, :-1] = self._actor_hist[sel, 1:]
+        self._actor_hist[sel, -1] = actor_obs
+        self._critic_hist[sel, :-1] = self._critic_hist[sel, 1:]
+        self._critic_hist[sel, -1] = critic_obs
+
+    def _fill_histories(
+        self,
+        env_ids: np.ndarray,
+        actor_obs: np.ndarray,
+        critic_obs: np.ndarray,
+    ) -> None:
+        self._actor_hist[env_ids, :] = actor_obs[:, None, :]
+        self._critic_hist[env_ids, :] = critic_obs[:, None, :]
 
     def _get_foot_height_from_probes(self) -> np.ndarray:
         probe_pos = self.get_foot_probe_pos()
