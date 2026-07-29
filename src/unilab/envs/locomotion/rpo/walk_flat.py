@@ -464,7 +464,15 @@ class RPOWalkEnv(RPOBaseEnv):
         }
 
     def build_symmetry_augmentation(self, *, device: str):
-        return None
+        if self._backend.backend_type != "mujoco":
+            return None
+        from unilab.envs.locomotion.rpo.symmetry import RPOSymmetryAugmentation
+
+        return RPOSymmetryAugmentation(
+            self._backend.model,
+            self.get_symmetry_obs_layouts(),
+            device=device,
+        )
 
     def _build_reward_context(
         self, info: dict, linvel, gyro, gravity, dof_pos, dof_vel
