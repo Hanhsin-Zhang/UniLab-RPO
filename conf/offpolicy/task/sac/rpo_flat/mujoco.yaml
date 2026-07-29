@@ -6,7 +6,7 @@ training:
 algo:
   num_envs: 2048
   learning_starts: 10
-  max_iterations: 5000
+  max_iterations: 10000
   save_interval: 1000
   updates_per_step: 8
   use_symmetry: true
@@ -26,7 +26,8 @@ reward:
     feet_distance: 0.05
     knee_distance: 0.05
     undesired_contacts: -20.0
-    feet_height: 0.5
+    feet_height: 0.4
+    feet_air_time: 0.3
     feet_phase: 0.0
     alive: 2.0
   tracking_sigma: 0.25
@@ -44,7 +45,7 @@ reward:
   knee_distance_min: 0.15
   knee_distance_max: 0.35
   feet_height_threshold: 0.02
-  feet_height_command_threshold: 0.01
+  feet_motion_command_threshold: 0.05
   feet_height_probe_reduction: min
   pose_weights: [5.0, 1.0, 0.01, 0.01, 5.0, 5.0, 5.0, 1.0, 0.01, 0.01, 5.0, 5.0, 50.0, 5.0, 10.0, 50.0, 50.0, 50.0, 5.0, 10.0, 50.0, 50.0, 50.0]
 

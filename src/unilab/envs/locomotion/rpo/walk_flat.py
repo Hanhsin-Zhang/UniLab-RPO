@@ -176,7 +176,7 @@ class RPOWalkRewardConfig:
     min_forward_speed_for_gait_reward: float = 0.0
     close_feet_threshold: float = 0.15
     feet_height_threshold: float = 0.02
-    feet_height_command_threshold: float = 0.01
+    feet_motion_command_threshold: float = 0.01
     feet_height_probe_reduction: str = "min"
     pose_weights: list[float] = field(default_factory=lambda: [0.01] * 12 + [50.0] * 11)
 
@@ -291,6 +291,13 @@ class RPOWalkDomainRandomizationProvider(LocomotionDRProvider):
     ) -> dict[str, np.ndarray]:
         return env._compute_obs(info_updates, linvel, gyro, gravity, dof_pos, dof_vel)  # type: ignore[no-any-return]
 
+    def build_reset_observation(
+        self, env: Any, env_ids: np.ndarray, info_updates: dict[str, Any]
+    ) -> dict[str, np.ndarray]:
+        env._current_feet_air_time[env_ids] = 0.0
+        info_updates["feet_air_time"] = env._current_feet_air_time[env_ids].copy()
+        return super().build_reset_observation(env, env_ids, info_updates)
+
     def build_reset_plan(self, env: Any, env_ids: np.ndarray) -> ResetPlan:
         plan = super().build_reset_plan(env, env_ids)
         num_reset = len(env_ids)
@@ -358,6 +365,7 @@ class RPOWalkEnv(RPOBaseEnv):
         dtype = get_global_dtype()
         self._feet_pos_b = np.zeros((num_envs, 2, 3), dtype=dtype)
         self._knee_pos_b = np.zeros((num_envs, 2, 3), dtype=dtype)
+        self._current_feet_air_time = np.zeros((num_envs, 2), dtype=dtype)
         joint_range = self._backend.get_joint_range()
         self._joint_range = (
             np.asarray(joint_range, dtype=dtype) if joint_range is not None else None
@@ -457,6 +465,8 @@ class RPOWalkEnv(RPOBaseEnv):
         self._knee_pos_b = self._body_pos_b_from_world(
             knee_pos, base_pos=base_pos, base_quat=base_quat
         )
+        self._update_feet_air_time()
+        state.info["feet_air_time"] = self._current_feet_air_time.copy()
 
         max_tilt_rad = np.deg2rad(self._reward_cfg.max_tilt_deg)
         tilt = np.arccos(np.clip(gravity[:, 2], -1, 1))
@@ -740,7 +750,25 @@ class RPOWalkEnv(RPOBaseEnv):
             "feet_air_time", np.zeros((self._num_envs, 2), dtype=get_global_dtype())
         )
         in_range = (air_time > 0.05) & (air_time < 0.5)
-        return np.sum(in_range.astype(float), axis=1)
+        reward = np.sum(in_range.astype(float), axis=1)
+        commands = np.asarray(
+            ctx.info.get("commands", np.zeros((self._num_envs, 3), dtype=get_global_dtype())),
+            dtype=get_global_dtype(),
+        )
+        moving = (np.linalg.norm(commands[:, :2], axis=1) + np.abs(commands[:, 2])) > float(
+            self._reward_cfg.feet_motion_command_threshold
+        )
+        return np.asarray(
+            reward * moving,
+            dtype=get_global_dtype(),
+        )
+
+    def _update_feet_air_time(self) -> None:
+        left_contact = compute_aggregated_foot_contact(self._backend, LEFT_FOOT_CONTACT_SENSORS)
+        right_contact = compute_aggregated_foot_contact(self._backend, RIGHT_FOOT_CONTACT_SENSORS)
+        feet_contact = np.stack([left_contact, right_contact], axis=1)
+        self._current_feet_air_time[~feet_contact] += float(self._cfg.ctrl_dt)
+        self._current_feet_air_time[feet_contact] = 0.0
 
     def _get_foot_height_from_probes(self) -> np.ndarray:
         probe_pos = self.get_foot_probe_pos()
@@ -771,7 +799,7 @@ class RPOWalkEnv(RPOBaseEnv):
             dtype=get_global_dtype(),
         )
         moving = (np.linalg.norm(commands[:, :2], axis=1) + np.abs(commands[:, 2])) > float(
-            self._reward_cfg.feet_height_command_threshold
+            self._reward_cfg.feet_motion_command_threshold
         )
         upright = rewards.upright_scale(ctx.gravity, ctx.num_envs)
         return np.asarray(reward * moving * upright, dtype=get_global_dtype())
