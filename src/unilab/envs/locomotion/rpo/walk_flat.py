@@ -177,6 +177,7 @@ class RPOWalkRewardConfig:
     close_feet_threshold: float = 0.15
     feet_height_threshold: float = 0.02
     feet_motion_command_threshold: float = 0.01
+    feet_motion_command_full_scale: float = 0.01
     feet_height_probe_reduction: str = "min"
     stand_still_command_threshold: float = 0.01
     stand_still_body_vel_threshold: float = 0.5
@@ -780,11 +781,30 @@ class RPOWalkEnv(RPOBaseEnv):
         left_error = np.square(left_foot[:, 2] - left_target)
         right_error = np.square(right_foot[:, 2] - right_target)
         reward = np.exp(-(left_error + right_error) / self._reward_cfg.feet_phase_tracking_sigma)
-        return np.asarray(reward * self._gait_reward_gate(ctx.linvel), dtype=get_global_dtype())
+        commands = np.asarray(
+            ctx.info.get("commands", np.zeros((self._num_envs, 3), dtype=get_global_dtype())),
+            dtype=get_global_dtype(),
+        )
+        return np.asarray(
+            reward * self._gait_reward_gate(ctx.linvel) * self._feet_motion_command_scale(commands),
+            dtype=get_global_dtype(),
+        )
 
     def _gait_reward_gate(self, linvel: np.ndarray) -> np.ndarray:
         min_forward_speed = getattr(self._reward_cfg, "min_forward_speed_for_gait_reward", 0.0)
         return compute_forward_speed_gate(linvel, min_forward_speed)
+
+    def _feet_motion_command_scale(self, commands: np.ndarray) -> np.ndarray:
+        command_arr = np.asarray(commands, dtype=get_global_dtype())
+        command_norm = np.linalg.norm(command_arr[:, :2], axis=1) + np.abs(command_arr[:, 2])
+        lower = float(self._reward_cfg.feet_motion_command_threshold)
+        upper = float(getattr(self._reward_cfg, "feet_motion_command_full_scale", lower))
+        if upper <= lower:
+            return np.asarray(command_norm > lower, dtype=get_global_dtype())
+        return np.asarray(
+            np.clip((command_norm - lower) / (upper - lower), 0.0, 1.0),
+            dtype=get_global_dtype(),
+        )
 
     def _reward_feet_phase_contrast(self, ctx: RewardContext):
         left_foot = self._backend.get_sensor_data("left_foot_pos")
@@ -850,17 +870,14 @@ class RPOWalkEnv(RPOBaseEnv):
         air_time = ctx.info.get(
             "feet_air_time", np.zeros((self._num_envs, 2), dtype=get_global_dtype())
         )
-        in_range = (air_time > 0.05) & (air_time < 0.5)
+        in_range = (air_time > 0.05) & (air_time < 0.35)
         reward = np.sum(in_range.astype(float), axis=1)
         commands = np.asarray(
             ctx.info.get("commands", np.zeros((self._num_envs, 3), dtype=get_global_dtype())),
             dtype=get_global_dtype(),
         )
-        moving = (np.linalg.norm(commands[:, :2], axis=1) + np.abs(commands[:, 2])) > float(
-            self._reward_cfg.feet_motion_command_threshold
-        )
         return np.asarray(
-            reward * moving,
+            reward * self._feet_motion_command_scale(commands),
             dtype=get_global_dtype(),
         )
 
@@ -951,11 +968,11 @@ class RPOWalkEnv(RPOBaseEnv):
             ctx.info.get("commands", np.zeros((self._num_envs, 3), dtype=get_global_dtype())),
             dtype=get_global_dtype(),
         )
-        moving = (np.linalg.norm(commands[:, :2], axis=1) + np.abs(commands[:, 2])) > float(
-            self._reward_cfg.feet_motion_command_threshold
-        )
         upright = rewards.upright_scale(ctx.gravity, ctx.num_envs)
-        return np.asarray(reward * moving * upright, dtype=get_global_dtype())
+        return np.asarray(
+            reward * self._feet_motion_command_scale(commands) * upright,
+            dtype=get_global_dtype(),
+        )
 
     def _reward_feet_contact_without_cmd(self, ctx: RewardContext):
         commands = np.asarray(
