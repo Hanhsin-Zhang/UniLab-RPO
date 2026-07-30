@@ -28,8 +28,10 @@ reward:
     undesired_contacts: -20.0
     feet_height: 0.4
     feet_air_time: 0.3
+    feet_contact_without_cmd: 0.1
     feet_phase: 0.0
     alive: 2.0
+    stand_still: -0.2
   tracking_sigma: 0.25
   base_height_target: 0.78
   min_base_height: 0.4
@@ -47,6 +49,10 @@ reward:
   feet_height_threshold: 0.02
   feet_motion_command_threshold: 0.05
   feet_height_probe_reduction: min
+  stand_still_command_threshold: 0.01
+  stand_still_body_vel_threshold: 0.5
+  stand_still_pos_weight: 1.0
+  stand_still_vel_weight: 0.04
   pose_weights: [5.0, 1.0, 0.01, 0.01, 5.0, 5.0, 5.0, 1.0, 0.01, 0.01, 5.0, 5.0, 50.0, 5.0, 10.0, 50.0, 50.0, 50.0, 5.0, 10.0, 50.0, 50.0, 50.0]
 
 env:

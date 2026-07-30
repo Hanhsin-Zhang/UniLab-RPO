@@ -178,6 +178,10 @@ class RPOWalkRewardConfig:
     feet_height_threshold: float = 0.02
     feet_motion_command_threshold: float = 0.01
     feet_height_probe_reduction: str = "min"
+    stand_still_command_threshold: float = 0.01
+    stand_still_body_vel_threshold: float = 0.5
+    stand_still_pos_weight: float = 1.0
+    stand_still_vel_weight: float = 0.04
     pose_weights: list[float] = field(default_factory=lambda: [0.01] * 12 + [50.0] * 11)
 
 
@@ -471,7 +475,9 @@ class RPOWalkEnv(RPOBaseEnv):
             "feet_double_stance": self._reward_feet_double_stance,
             "feet_air_time": self._reward_feet_air_time,
             "feet_height": self._reward_feet_height,
+            "feet_contact_without_cmd": self._reward_feet_contact_without_cmd,
             "alive": rewards.alive,
+            "stand_still": self._reward_stand_still,
         }
 
     def _terrain_relative_base_height(self) -> np.ndarray:
@@ -950,6 +956,43 @@ class RPOWalkEnv(RPOBaseEnv):
         )
         upright = rewards.upright_scale(ctx.gravity, ctx.num_envs)
         return np.asarray(reward * moving * upright, dtype=get_global_dtype())
+
+    def _reward_feet_contact_without_cmd(self, ctx: RewardContext):
+        commands = np.asarray(
+            ctx.info.get("commands", np.zeros((self._num_envs, 3), dtype=get_global_dtype())),
+            dtype=get_global_dtype(),
+        )
+        command_norm = np.linalg.norm(commands[:, :2], axis=1) + np.abs(commands[:, 2])
+        still = command_norm < float(self._reward_cfg.stand_still_command_threshold)
+        contacts = np.asarray(
+            ctx.info.get("feet_contact", np.zeros((self._num_envs, 2), dtype=np.bool_)), dtype=np.bool_
+        )
+        both_contact = np.sum(contacts.astype(np.int32), axis=1) == 2
+        upright = rewards.upright_scale(ctx.gravity, ctx.num_envs)
+        return np.asarray(still * both_contact * upright, dtype=get_global_dtype())
+
+    def _reward_stand_still(self, ctx: RewardContext):
+        commands = np.asarray(
+            ctx.info.get("commands", np.zeros((self._num_envs, 3), dtype=get_global_dtype())),
+            dtype=get_global_dtype(),
+        )
+        command_norm = np.linalg.norm(commands[:, :2], axis=1) + np.abs(commands[:, 2])
+        body_lin_vel = np.linalg.norm(ctx.linvel[:, :2], axis=1)
+        body_ang_vel = np.abs(ctx.gyro[:, 2])
+        body_vel = body_lin_vel + body_ang_vel
+        pos_reward = float(self._reward_cfg.stand_still_pos_weight) * np.sum(
+            np.abs(ctx.dof_pos - ctx.default_angles), axis=1
+        )
+        assert ctx.dof_vel is not None
+        vel_reward = float(self._reward_cfg.stand_still_vel_weight) * np.sum(np.abs(ctx.dof_vel), axis=1)
+        penalty = np.where(
+            (command_norm > float(self._reward_cfg.stand_still_command_threshold))
+            | (body_vel > float(self._reward_cfg.stand_still_body_vel_threshold)),
+            0.0,
+            pos_reward + vel_reward,
+        )
+        upright = rewards.upright_scale(ctx.gravity, ctx.num_envs)
+        return np.asarray(penalty * upright, dtype=get_global_dtype())
 
     def _reward_upper_body_pose(self, ctx: RewardContext):
         diff = ctx.dof_pos - self.default_angles
