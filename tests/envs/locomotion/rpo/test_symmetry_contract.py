@@ -42,6 +42,8 @@ def test_rpo_walk_flat_symmetry_contract_matches_obs_groups():
     env = _make_env()
 
     try:
+        assert env.obs_groups_spec["obs"] == 78
+        assert env.obs_groups_spec["critic"] == 135
         layouts = env.get_symmetry_obs_layouts()
         assert set(layouts) == {"obs", "critic"}
         for group_name, layout in layouts.items():
@@ -93,16 +95,14 @@ def test_rpo_walk_flat_symmetry_mirrors_actions_and_obs_like_baseline():
 
         obs = torch.zeros((1, env.obs_groups_spec["obs"]), dtype=torch.float32)
         obs[:, 75:78] = torch.tensor([[1.0, 2.0, 3.0]])
-        obs[:, 78:80] = torch.tensor([[0.25, 1.25]])
         mirrored_obs = augmentation.mirror_obs(obs, obs_group="obs")
         torch.testing.assert_close(mirrored_obs[:, 75:78], torch.tensor([[1.0, -2.0, -3.0]]))
-        torch.testing.assert_close(mirrored_obs[:, 78:80], torch.tensor([[1.25, 0.25]]))
 
         critic_obs = torch.zeros((1, env.obs_groups_spec["critic"]), dtype=torch.float32)
-        critic_obs[:, 80:83] = torch.tensor([[4.0, 5.0, 6.0]])
+        critic_obs[:, 78:81] = torch.tensor([[4.0, 5.0, 6.0]])
         mirrored_critic_obs = augmentation.mirror_obs(critic_obs, obs_group="critic")
         torch.testing.assert_close(
-            mirrored_critic_obs[:, 80:83],
+            mirrored_critic_obs[:, 78:81],
             torch.tensor([[4.0, -5.0, 6.0]]),
         )
     finally:

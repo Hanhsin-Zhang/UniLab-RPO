@@ -387,7 +387,7 @@ class RPOWalkEnv(RPOBaseEnv):
         dtype = get_global_dtype()
         self._actor_hist_len = max(1, int(cfg.actor_obs_history_length))
         self._critic_hist_len = max(1, int(cfg.critic_obs_history_length))
-        self._actor_obs_dim = 3 + 3 + self._num_action + self._num_action + self._num_action + 3 + 2
+        self._actor_obs_dim = 3 + 3 + self._num_action + self._num_action + self._num_action + 3
         self._critic_obs_dim = self._actor_obs_dim + 3 + 2 + 2 + 2 + 2 + self._num_action + self._num_action
         self._actor_hist = np.zeros(
             (num_envs, self._actor_hist_len, self._actor_obs_dim), dtype=dtype
@@ -584,7 +584,6 @@ class RPOWalkEnv(RPOBaseEnv):
         diff = dof_pos - self.default_angles
         command = info["commands"]
         last_actions = info.get("current_actions", np.zeros_like(diff))
-        gait_phase = info.get("gait_phase", np.zeros((batch_size, 2), dtype=get_global_dtype()))
         feet_contact = np.asarray(
             info.get("feet_contact", np.zeros((batch_size, 2), dtype=get_global_dtype())),
             dtype=get_global_dtype(),
@@ -626,7 +625,6 @@ class RPOWalkEnv(RPOBaseEnv):
                 noisy_dof_vel * actor_dof_vel_scale,
                 last_actions,
                 command,
-                gait_phase,
             ],
             axis=1,
             dtype=get_global_dtype(),
@@ -647,7 +645,6 @@ class RPOWalkEnv(RPOBaseEnv):
                 dof_vel * critic_dof_vel_scale,
                 last_actions,
                 command,
-                gait_phase,
             ],
             axis=1,
             dtype=get_global_dtype(),
@@ -700,7 +697,6 @@ class RPOWalkEnv(RPOBaseEnv):
             ("dof_vel", self._num_action),
             ("actions", self._num_action),
             ("command", 3),
-            ("gait_phase", 2),
         )
 
     @staticmethod
