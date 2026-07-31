@@ -7,7 +7,7 @@ algo:
   num_envs: 4096
   learning_starts: 10
   max_iterations: 6000
-  save_interval: 1000
+  save_interval: 2000
   updates_per_step: 8
   use_symmetry: true
   algo_params:
@@ -17,10 +17,10 @@ algo:
 reward:
   scales:
     tracking_lin_vel: 2.0
-    tracking_ang_vel: 1.5
+    tracking_ang_vel: 2.0
     penalty_ang_vel_xy: -1.0
     penalty_orientation: -10.0
-    penalty_action_rate: -4.0
+    penalty_action_rate: -6.0
     pose: -0.5
     penalty_feet_ori: -20.0
     feet_distance: 0.05
@@ -28,7 +28,7 @@ reward:
     undesired_contacts: -20.0
     feet_height: 0.4
     feet_air_time: 0.3
-    feet_contact_without_cmd: 0.1
+    feet_contact_without_cmd: 1.0
     feet_phase: 0.0
     alive: 2.0
     stand_still: -0.2
@@ -47,17 +47,18 @@ reward:
   knee_distance_min: 0.15
   knee_distance_max: 0.35
   feet_height_threshold: 0.02
-  feet_motion_command_threshold: 0.05
+  feet_motion_command_threshold: 0.4
+  feet_motion_command_full_scale: 1.0
   feet_height_probe_reduction: min
   stand_still_command_threshold: 0.01
   stand_still_body_vel_threshold: 0.5
   stand_still_pos_weight: 1.0
   stand_still_vel_weight: 0.04
-  pose_weights: [5.0, 1.0, 0.01, 0.01, 5.0, 5.0, 5.0, 1.0, 0.01, 0.01, 5.0, 5.0, 50.0, 5.0, 10.0, 50.0, 50.0, 50.0, 5.0, 10.0, 50.0, 50.0, 50.0]
+  pose_weights: [1.0, 0.1, 0.01, 0.01, 5.0, 5.0, 1.0, 0.1, 0.01, 0.01, 5.0, 5.0, 50.0, 5.0, 20.0, 50.0, 50.0, 50.0, 5.0, 20.0, 50.0, 50.0, 50.0]
 
 env:
-  actor_obs_history_length: 1
-  critic_obs_history_length: 1
+  actor_obs_history_length: 3
+  critic_obs_history_length: 3
   commands:
     rel_standing_envs: 0.2
   control_config:
@@ -83,7 +84,7 @@ env:
     kd_multiplier_range: [0.9, 1.1]
     push_robots: true
     push_interval: 250
-    max_force: [300.0, 300.0, 200.0]
+    max_force: [30.0, 30.0, 15.0]
     push_body_name: base_link
     randomize_reset_joint_qpos: true
     reset_joint_qpos_range: [-0.1, 0.1]
@@ -101,9 +102,9 @@ env:
     degree: 0.001
   noise_config:
     level: 1.0
-    scale_joint_angle: 0.00
-    scale_joint_vel: 0.1
-    scale_gyro: 0.00
-    scale_gravity: 0.00
-    scale_linvel: 0.0
+    scale_joint_angle: 0.01
+    scale_joint_vel: 0.3
+    scale_gyro: 0.1
+    scale_gravity: 0.05
+    scale_linvel: 0.1
     seed: null
